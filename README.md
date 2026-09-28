@@ -97,6 +97,30 @@ async def ring_webhook(request):
     return Response(status_code=200)
 ```
 
+### Ring account linking
+
+Ring links accounts two ways. The default, **one-way** flow starts in the Ring Appstore: Ring
+posts an authorization code to your Token Exchange URL, then sends the user's browser to your
+Account Link URL with a `nonce` and `time`. `RingLinker` handles both halves and the
+**partner-initiated** PKCE flow, and keeps tokens fresh.
+
+```python
+from stoop import Store
+from stoop.sources.ring_oauth import RingLinker, RingOAuth, RingOAuthConfig, SqliteTokenStore
+
+oauth = RingOAuth(RingOAuthConfig(client_id=..., client_secret=..., hmac_key=...))
+linker = RingLinker(oauth, SqliteTokenStore(store, cipher=Fernet(key)))   # any encrypt/decrypt pair
+
+# Token Exchange URL (server to server): park the tokens, look up the Ring account id.
+link_id = linker.receive_code(code)
+
+# Account Link URL (browser, after your own sign-in): prove which parked token is this user's.
+link_id = linker.claim_by_nonce(nonce=nonce, time_value=time, owner=user.id)
+
+# Later: a valid access token, refreshed and persisted when needed.
+with RingHistory(linker.access_token(link_id)) as ring: ...
+```
+
 ### Ring history backfill
 
 ```python
@@ -121,6 +145,37 @@ engine = PolicyEngine(store, config=PolicyConfig(refine_min_severity="medium"),
                       snapshot_fetcher=fetch_ring_snapshot)   # optional: bytes for multimodal context
 ```
 
+## Custom rules
+
+Rules live in an ordered registry. The first rule that returns a decision wins, so specific
+rules go before general ones. `home_rules()` returns a fresh copy of the default set; add,
+move, replace or disable without forking:
+
+```python
+from stoop import Action, Decision, EventKind, PolicyEngine, Severity, SiteKind
+from stoop.policy import RuleContext, home_rules, home_sweeps
+
+rules = home_rules()
+
+@rules.add(before="unknown_visitor", kinds={EventKind.BUTTON_PRESS})
+def lunch_courier(ctx: RuleContext) -> Decision | None:
+    """Weekday lunch doorbells at an office are couriers, not strangers."""
+    if 11 <= ctx.local.hour < 14 and ctx.site.kind is SiteKind.OFFICE:
+        return ctx.decide(Action.LOG, Severity.INFO, "lunch_courier", "Lunch delivery window.", f"Lunch delivery at {ctx.where}.")
+    return None
+
+rules.disable("package_at_risk")
+
+engine = PolicyEngine(store, rules=rules, sweeps=home_sweeps())
+print(rules.names())   # evaluation order
+```
+
+`RuleContext` gives a rule the event, site, current visit, matched expected visit, anomaly
+score, quiet-hours flag, known people, and builders: `ctx.decide(...)`, `ctx.actions(...)`,
+`ctx.recent_decision(...)`. Sweep checks work the same way through `SweepRegistry` and
+`SweepContext`, and every default rule is a plain function in `stoop.policy.home_rules` you
+can import and reuse.
+
 ## Decisions
 
 Every decision carries `action` (ignore, log, notify, escalate), `severity` (info, low,
@@ -143,6 +198,13 @@ uv run ruff check src tests
 
 Integration tests use the community [`ring-sandbox`](https://github.com/josepha-mayo/ring-sandbox)
 emulator in-process, so no Ring account is needed to run them.
+
+## Docs
+
+- [`docs/roadmap.md`](docs/roadmap.md): what is reusable today, what is not yet, and what is
+  planned (OAuth token client, rule registry, FastAPI router, PyPI release).
+- [`docs/friction-log.md`](docs/friction-log.md): platform obstacles met while building on
+  Ring, Alexa+ and AWS, and the workarounds.
 
 ## License
 

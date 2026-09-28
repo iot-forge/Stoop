@@ -73,3 +73,32 @@ def test_expected_visit_windows_expand_recurring():
     assert all(s.hour == 9 for s in starts)
     one_off = ExpectedVisit(site_id="s", label="plumber", window_start=MONDAY, window_end=MONDAY + timedelta(hours=2))
     assert one_off.windows_between(MONDAY - timedelta(hours=1), MONDAY + timedelta(hours=1), ZoneInfo(TZ)) == [(MONDAY, MONDAY + timedelta(hours=2))]
+
+
+def test_unlearned_events_are_judged_but_not_taught(store):
+    """Demo replays (learn=False) never make an odd hour look normal."""
+    from datetime import UTC
+
+    from stoop import PolicyEngine, Site
+    from stoop.sources.synthetic import BUILTIN, generate_baseline, play_scenario
+
+    store.put_site(Site(id="s", name="S", timezone=TZ))
+    engine = PolicyEngine(store)
+    for e in generate_baseline(site_id="s", days=28, end=MONDAY.astimezone(UTC), tz=TZ):
+        engine.handle(e, learn_only=True)
+    night = local(2026, 9, 22, 3, 10)
+    for _ in range(4):  # replay the same scene four times at 3 AM on different nights
+        for e in play_scenario(BUILTIN["delivery"], site_id="s", start=night, learn=False, label=f"demo-{_}"):
+            engine.handle(e)
+        night += timedelta(days=1)
+    model = engine.routine_for("s", night)
+    assert model.anomaly("motion:human", night) > 0.9  # still unusual
+    # The same replays with learn=True would have lowered it.
+    other = PolicyEngine(Store(":memory:"))
+    other.store.put_site(Site(id="s", name="S", timezone=TZ))
+    night = local(2026, 9, 22, 3, 10)
+    for _ in range(4):
+        for e in play_scenario(BUILTIN["delivery"], site_id="s", start=night, learn=True, label=f"live-{_}"):
+            other.handle(e)
+        night += timedelta(days=1)
+    assert other.routine_for("s", night).anomaly("motion:human", night) < 0.9

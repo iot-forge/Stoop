@@ -67,6 +67,14 @@ class Store:
         with self._lock:
             return self._conn.execute(sql, tuple(params)).fetchall()
 
+    # Public escape hatches for apps that keep their own tables in the same database
+    # (accounts, token links). Same connection, same lock, same file.
+    def execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:
+        return self._exec(sql, params)
+
+    def query(self, sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
+        return self._rows(sql, params)
+
     # ------------------------------------------------------------------ sites
     def put_site(self, site: Site) -> Site:
         self._exec("INSERT OR REPLACE INTO sites(id, json) VALUES (?, ?)", (site.id, site.model_dump_json()))

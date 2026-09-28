@@ -1,8 +1,9 @@
 """Policy engine: event + memory -> decision.
 
-Deterministic rules run first and always produce a complete decision. An optional reasoner
-may then refine wording and nudge severity by one step. Anything sensitive is flagged with
-``requires_confirmation`` or a ``sensitive`` suggested action and is never auto-executed.
+Deterministic rules from a :class:`RuleRegistry` run first and always produce a complete
+decision. An optional reasoner may then refine wording and nudge severity by one step.
+Anything sensitive is flagged with ``requires_confirmation`` or a ``sensitive`` suggested
+action and is never auto-executed.
 
 Runs on the ingestion path only. Query paths (dashboards, MCP tools) read the store and
 stay well under Alexa+'s 500 ms tool budget.
@@ -16,22 +17,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from stoop.events import Detected, Event, EventKind
-from stoop.memory.models import (
-    SEVERITY_ORDER,
-    Action,
-    Decision,
-    ExpectedVisit,
-    Person,
-    Role,
-    Severity,
-    Site,
-    SiteKind,
-    SuggestedAction,
-    Visit,
-    VisitStatus,
-)
+from stoop.memory.models import SEVERITY_ORDER, Action, Decision, Severity, Site, Visit, VisitStatus
 from stoop.memory.store import Store
 from stoop.policy.routines import RoutineModel
+from stoop.policy.rules import Match, RuleContext, RuleRegistry, SweepContext, SweepRegistry
 from stoop.reasoning.base import Reasoner, ReasoningContext
 
 log = logging.getLogger(__name__)
@@ -57,13 +46,6 @@ class PolicyConfig:
     refine_always: bool = False
 
 
-@dataclass
-class _Match:
-    expected: ExpectedVisit
-    person: Person | None
-    window: tuple[datetime, datetime]
-
-
 class PolicyEngine:
     def __init__(
         self,
@@ -72,11 +54,17 @@ class PolicyEngine:
         config: PolicyConfig | None = None,
         reasoner: Reasoner | None = None,
         snapshot_fetcher: SnapshotFetcher | None = None,
+        rules: RuleRegistry | None = None,
+        sweeps: SweepRegistry | None = None,
     ) -> None:
+        from stoop.policy.home_rules import home_rules, home_sweeps
+
         self.store = store
         self.config = config or PolicyConfig()
         self.reasoner = reasoner
         self.snapshot_fetcher = snapshot_fetcher
+        self.rules = rules if rules is not None else home_rules()
+        self.sweeps = sweeps if sweeps is not None else home_sweeps()
         self._routine_cache: dict[tuple[str, str], RoutineModel] = {}
 
     # ------------------------------------------------------------------ public
@@ -92,7 +80,11 @@ class PolicyEngine:
         self._routine_cache.pop((site.id, event.occurred_at.date().isoformat()), None)
         visit = self._sessionize(site, event)
         match = self._match_expected(site, event.occurred_at)
-        if visit is not None and match is not None and visit.expected_visit_id is None:
+        if match is not None and match.departing and not self._departure_applies(site, event, visit):
+            match = None
+        # Only arrivals bind a visit to the schedule; a departure visit stays unbound so
+        # "did they arrive?" checks keep looking at the arrival window.
+        if visit is not None and match is not None and not match.departing and visit.expected_visit_id is None:
             visit.expected_visit_id = match.expected.id
             visit.person_id = match.expected.person_id
             self.store.put_visit(visit)
@@ -101,12 +93,24 @@ class PolicyEngine:
             return None
 
         routine = self._routine(site, event.occurred_at)
-        anomaly = routine.anomaly(event.key, event.occurred_at)
         local = event.occurred_at.astimezone(site.zone)
-        decision = self._evaluate(site, event, visit, match, anomaly, local)
+        ctx = RuleContext(
+            site=site,
+            event=event,
+            local=local,
+            config=self.config,
+            store=self.store,
+            visit=visit,
+            match=match,
+            anomaly=routine.anomaly(event.key, event.occurred_at),
+            quiet=self._in_quiet_hours(local),
+            people=self.store.persons(site.id),
+        )
+        decision = self.rules.evaluate(ctx)
         decision = self._suppress_repeats(decision)
-        decision = self._refine(site, event, visit, match, anomaly, local, decision)
+        decision = self._refine(ctx, decision)
         self.store.put_decision(decision)
+        self._supersede_earlier(decision)
         return decision
 
     def sweep(self, now: datetime | None = None) -> list[Decision]:
@@ -114,7 +118,12 @@ class PolicyEngine:
         now = (now or datetime.now(tz=UTC)).astimezone(UTC)
         out: list[Decision] = []
         for site in self.store.list_sites():
-            out.extend(self._sweep_site(site, now))
+            ctx = SweepContext(
+                site=site, now=now, local=now.astimezone(site.zone), config=self.config, store=self.store,
+                routine=self._routine(site, now), people=self.store.persons(site.id),
+            )
+            for d in self.sweeps.run(ctx):
+                out.append(self.store.put_decision(d))
         return out
 
     def routine_for(self, site_id: str, at: datetime | None = None) -> RoutineModel:
@@ -133,7 +142,9 @@ class PolicyEngine:
         model = self._routine_cache.get(key)
         if model is None:
             since = at - timedelta(days=self.config.history_days)
-            events = [e for e in self.store.events(site.id, since=since, until=at) if e.occurred_at < at]
+            # Events flagged raw["learn"] = False (e.g. replayed demo scenes) are judged but never
+            # become "normal" for this door.
+            events = [e for e in self.store.events(site.id, since=since, until=at) if e.occurred_at < at and e.raw.get("learn", True)]
             model = RoutineModel(events, zone=site.zone, days=self.config.history_days)
             self._routine_cache[key] = model
         return model
@@ -170,17 +181,53 @@ class PolicyEngine:
         self.store.put_visit(visit)
         return visit
 
-    def _match_expected(self, site: Site, at: datetime) -> _Match | None:
+    def _match_expected(self, site: Site, at: datetime) -> Match | None:
         grace = timedelta(minutes=self.config.match_grace_min)
-        best: _Match | None = None
-        for exp in self.store.expected(site.id):
+        best: Match | None = None
+        expected = self.store.expected(site.id)
+        for exp in expected:
             for ws, we in exp.windows_between(at - grace, at + grace, site.zone):
                 if ws - grace <= at <= we + grace:
                     person = self.store.get_person(exp.person_id) if exp.person_id else None
-                    cand = _Match(exp, person, (ws, we))
+                    cand = Match(exp, person, (ws, we))
                     if best is None or (we - ws) < (best.window[1] - best.window[0]):
                         best = cand
-        return best
+        if best is not None:
+            return best
+        # Departure: a matched arrival earlier today whose expected stay has not run out yet.
+        by_id = {e.id: e for e in expected}
+        for visit in self.store.visits(site.id, since=at - timedelta(hours=24), limit=50):
+            exp = by_id.get(visit.expected_visit_id or "")
+            if exp is None or visit.started_at > at:
+                continue
+            stay = timedelta(minutes=exp.expected_duration_min or 0)
+            window_end = max((we for ws, we in exp.windows_between(visit.started_at - grace, visit.started_at + grace, site.zone)), default=visit.started_at)
+            deadline = max(window_end, visit.started_at + stay) + grace
+            if visit.started_at <= at <= deadline:
+                person = self.store.get_person(exp.person_id) if exp.person_id else None
+                return Match(exp, person, (visit.started_at, deadline), phase="departure")
+        return None
+
+    def _departure_applies(self, site: Site, event: Event, visit: Visit | None) -> bool:
+        """Is this event plausibly the expected visitor leaving, rather than someone else arriving?
+
+        A doorbell press never is: the visitor is inside. A person outside counts only when the
+        door just opened from inside during this visit, or when the home has no door sensor at all
+        (camera-only homes cannot tell the difference, so the stay window is the best signal).
+        """
+        if event.kind is EventKind.BUTTON_PRESS:
+            return False
+        if event.kind in (EventKind.DOOR_OPENED, EventKind.DOOR_CLOSED):
+            return True
+        if event.kind is EventKind.MOTION:
+            if visit is not None and visit.door_opened:
+                return True
+            return not self._has_door_sensor(site, event.occurred_at)
+        return True
+
+    def _has_door_sensor(self, site: Site, at: datetime) -> bool:
+        since = at - timedelta(days=self.config.history_days)
+        return bool(self.store.events(site.id, since=since, until=at, kinds=[EventKind.DOOR_OPENED, EventKind.DOOR_CLOSED], limit=1))
 
     def _track_state(self, site: Site, event: Event) -> None:
         if event.kind is EventKind.DOOR_OPENED:
@@ -199,144 +246,6 @@ class PolicyEngine:
         h = local.hour
         return (h >= s or h < e) if s > e else (s <= h < e)
 
-    # ----------------------------------------------------------------- rules
-    def _evaluate(
-        self,
-        site: Site,
-        ev: Event,
-        visit: Visit | None,
-        match: _Match | None,
-        anomaly: float,
-        local: datetime,
-    ) -> Decision:
-        cfg = self.config
-        quiet = self._in_quiet_hours(local)
-        when = local.strftime("%I:%M %p").lstrip("0")
-        where = ev.device_name or "the front door"
-        who = _who(match)
-        family = [p for p in self.store.persons(site.id) if p.role is Role.FAMILY]
-        d = _base(site, ev, visit, match, anomaly)
-
-        def actions(*kinds: str, sensitive_kinds: tuple[str, ...] = ()) -> list[SuggestedAction]:
-            out: list[SuggestedAction] = []
-            for k in kinds:
-                if k == "view_live":
-                    out.append(SuggestedAction(kind=k, label="Look at the door now", payload={"device_id": ev.device_id}))
-                elif k == "call_family" and family:
-                    out.append(SuggestedAction(kind="call_person", label=f"Call {family[0].name}", target_person_id=family[0].id))
-                elif k == "mark_expected":
-                    out.append(SuggestedAction(kind=k, label="This visitor was expected", payload={"visit_id": visit.id if visit else None}))
-                elif k == "contact_emergency":
-                    out.append(SuggestedAction(kind=k, label="Contact emergency services", sensitive=True))
-                elif k == "check_device":
-                    out.append(SuggestedAction(kind=k, label="Check the device", payload={"device_id": ev.device_id}))
-            for k in sensitive_kinds:
-                out.append(SuggestedAction(kind=k, label=k.replace("_", " ").capitalize(), sensitive=True))
-            return out
-
-        k = ev.kind
-        if k is EventKind.SENSOR_ALERT:
-            label = (ev.sensor or "sensor").replace("_", " ")
-            return d(
-                Action.ESCALATE, Severity.HIGH, "sensor_alert",
-                f"A {label} alert came from {where}.",
-                f"{label.capitalize()} alert at {where} at {when}.",
-                actions=actions("view_live", "call_family", "contact_emergency"),
-                confidence=0.95, key=f"{ev.device_id}:{ev.sensor}",
-            )
-        if k is EventKind.SENSOR_CLEARED:
-            return d(Action.LOG, Severity.INFO, "sensor_cleared", "Sensor alert cleared.", f"The {ev.sensor or 'sensor'} alert at {where} cleared.")
-        if k is EventKind.DEVICE_OFFLINE:
-            return d(Action.NOTIFY, Severity.LOW, "device_offline", "The device stopped reporting.", f"{where} went offline at {when}.", actions=actions("check_device"), key=ev.device_id)
-        if k is EventKind.DEVICE_ONLINE:
-            return d(Action.LOG, Severity.INFO, "device_online", "Device back online.", f"{where} is back online.")
-        if k is EventKind.DOOR_CLOSED:
-            return d(Action.LOG, Severity.INFO, "door_closed", "Door closed.", f"{where} closed at {when}.")
-        if k is EventKind.LIVE_VIEW or k is EventKind.OTHER:
-            return d(Action.LOG, Severity.INFO, k.value, "Informational event.", f"{k.value.replace('_', ' ').capitalize()} at {where}.")
-
-        if k is EventKind.DOOR_OPENED:
-            arrived_first = visit is not None and visit.presence_count > 0
-            if match:
-                return d(Action.LOG, Severity.INFO, "expected_entry", f"{who} is expected now.", f"{who} went in at {when}.")
-            if quiet and not arrived_first and site.kind is SiteKind.HOME:
-                return d(
-                    Action.NOTIFY, Severity.HIGH, "night_door_open",
-                    "The door opened during quiet hours with nobody seen outside first, which can mean someone left the house.",
-                    f"{where} opened at {when} and nobody had come to the door first.",
-                    actions=actions("view_live", "call_family"), confidence=0.8, key=visit.id if visit else None,
-                )
-            if not arrived_first:
-                return d(Action.LOG, Severity.LOW, "door_open_from_inside", "Door opened from inside.", f"{where} opened from inside at {when}.")
-            return d(Action.LOG, Severity.LOW, "door_opened", "Door opened after a visitor arrived.", f"{where} opened at {when}.")
-
-        if k is EventKind.BUTTON_PRESS:
-            if match:
-                return d(
-                    Action.NOTIFY, Severity.INFO, "expected_arrival", f"{who} is scheduled for this window.",
-                    f"{who} arrived at {when}, as scheduled.", confidence=0.9, key=visit.id if visit else None,
-                )
-            if quiet:
-                return d(
-                    Action.NOTIFY, Severity.HIGH, "night_doorbell", "Doorbell during quiet hours with no expected visitor.",
-                    f"Someone rang {where} at {when}. Nobody was expected.",
-                    actions=actions("view_live", "call_family", "mark_expected"), confidence=0.85, key=visit.id if visit else None,
-                )
-            if visit is not None and visit.presence_count >= cfg.linger_presence_count and _within(visit, cfg.linger_window_min):
-                return d(
-                    Action.NOTIFY, Severity.MEDIUM, "lingering", "Repeated presence and ringing without being let in.",
-                    f"Someone has been at {where} for several minutes and rang again at {when}.",
-                    actions=actions("view_live", "call_family", "mark_expected"), confidence=0.75, key=visit.id,
-                )
-            return d(
-                Action.NOTIFY, Severity.MEDIUM, "unknown_visitor", "Doorbell with no matching expected visit.",
-                f"Someone rang {where} at {when}. Nobody was expected.",
-                actions=actions("view_live", "mark_expected"), confidence=0.7, key=visit.id if visit else None,
-            )
-
-        # MOTION
-        det = ev.detected or Detected.UNKNOWN
-        if det is Detected.PACKAGE:
-            return d(Action.NOTIFY, Severity.INFO, "package_delivered", "Camera saw a package.", f"A package was left at {where} at {when}.", confidence=0.8, key=visit.id if visit else None)
-        if det in (Detected.VEHICLE, Detected.ANIMAL):
-            if quiet and anomaly >= cfg.anomaly_notify_threshold:
-                return d(Action.LOG, Severity.LOW, "night_vehicle", "Vehicle or animal during quiet hours.", f"A {det.value} passed {where} at {when}.")
-            return d(Action.IGNORE, Severity.INFO, "routine_motion", "Routine non-person motion.", f"A {det.value} passed {where}.")
-        if det in (Detected.MOTION, Detected.UNKNOWN):
-            return d(Action.IGNORE, Severity.INFO, "routine_motion", "Unclassified motion.", f"Motion at {where}.")
-
-        # human
-        if match:
-            return d(Action.LOG, Severity.INFO, "expected_presence", f"{who} is expected now.", f"{who} is at {where}.")
-        if visit is not None and visit.presence_count >= cfg.linger_presence_count and _within(visit, cfg.linger_window_min):
-            return d(
-                Action.NOTIFY, Severity.MEDIUM, "lingering", "Someone has stayed at the door for several minutes.",
-                f"Someone has been at {where} for several minutes without being let in.",
-                actions=actions("view_live", "call_family", "mark_expected"), confidence=0.7, key=visit.id,
-            )
-        recent_package = self.store.decision_for_rule(
-            site.id, "package_delivered", since=ev.occurred_at - timedelta(hours=cfg.package_at_risk_hours), until=ev.occurred_at
-        )
-        if recent_package and (visit is None or not visit.package):
-            return d(
-                Action.NOTIFY, Severity.MEDIUM, "package_at_risk", "A person approached while a package was waiting.",
-                f"Someone is at {where} and a package was delivered earlier. Worth a look.",
-                actions=actions("view_live"), confidence=0.6, key=visit.id if visit else None,
-            )
-        if quiet:
-            return d(
-                Action.NOTIFY, Severity.MEDIUM, "night_presence", "Person at the door during quiet hours.",
-                f"Someone is at {where} at {when}.", actions=actions("view_live", "call_family"), confidence=0.7,
-                key=visit.id if visit else None,
-            )
-        if anomaly >= cfg.anomaly_notify_threshold:
-            return d(
-                Action.NOTIFY, Severity.LOW, "unusual_time", "Person at the door at an unusual time for this home.",
-                f"Someone is at {where} at {when}, which is unusual for this time.", actions=actions("view_live", "mark_expected"),
-                confidence=0.55, key=visit.id if visit else None,
-            )
-        return d(Action.LOG, Severity.INFO, "routine_presence", "Person at the door at a normal time.", f"Someone is at {where}.")
-
     def _suppress_repeats(self, decision: Decision) -> Decision:
         if decision.action not in (Action.NOTIFY, Action.ESCALATE):
             return decision
@@ -350,42 +259,50 @@ class PolicyEngine:
             decision.metadata["suppressed_by"] = prior.id
         return decision
 
-    def _refine(
-        self,
-        site: Site,
-        ev: Event,
-        visit: Visit | None,
-        match: _Match | None,
-        anomaly: float,
-        local: datetime,
-        decision: Decision,
-    ) -> Decision:
+    def _supersede_earlier(self, decision: Decision) -> None:
+        """One visitor, one alert: a new alert for the same visit retires earlier open ones of
+        equal or lower severity, so "someone is at the door" folds into "someone rang".
+        """
+        if decision.action not in (Action.NOTIFY, Action.ESCALATE) or decision.visit_id is None:
+            return
+        rank = _rank(decision.severity)
+        for earlier in self.store.decisions(decision.site_id, unacknowledged_only=True, limit=50):
+            if earlier.id == decision.id or earlier.visit_id != decision.visit_id or earlier.severity is Severity.INFO:
+                continue
+            if _rank(earlier.severity) <= rank:
+                earlier.acknowledged_at = decision.created_at
+                earlier.acknowledged_by = f"superseded:{decision.id}"
+                earlier.metadata["superseded_by"] = decision.id
+                self.store.put_decision(earlier)
+
+    def _refine(self, ctx: RuleContext, decision: Decision) -> Decision:
         if self.reasoner is None or decision.action not in (Action.NOTIFY, Action.ESCALATE):
             return decision
         if not self.config.refine_always and _rank(decision.severity) < _rank(self.config.refine_min_severity):
             return decision
+        ev, site = ctx.event, ctx.site
         snapshot = None
         if self.snapshot_fetcher is not None and ev.media:
             try:
                 snapshot = self.snapshot_fetcher(ev)
             except Exception:  # noqa: BLE001
                 log.exception("snapshot fetch failed")
-        ctx = ReasoningContext(
+        rctx = ReasoningContext(
             site=site,
             event=ev,
             decision=decision,
-            local_time=local,
-            visit=visit,
-            matched_person=match.person if match else None,
-            matched_expected=match.expected if match else None,
+            local_time=ctx.local,
+            visit=ctx.visit,
+            matched_person=ctx.match.person if ctx.match else None,
+            matched_expected=ctx.match.expected if ctx.match else None,
             recent_events=self.store.events(site.id, since=ev.occurred_at - timedelta(hours=24), until=ev.occurred_at, limit=50, newest_first=True),
             recent_decisions=self.store.decisions(site.id, since=ev.occurred_at - timedelta(hours=24), limit=20),
-            anomaly_score=anomaly,
-            known_people=self.store.persons(site.id),
+            anomaly_score=ctx.anomaly,
+            known_people=ctx.people,
             snapshot=snapshot,
         )
         try:
-            ref = self.reasoner.refine(ctx)
+            ref = self.reasoner.refine(rctx)
         except Exception:  # noqa: BLE001
             log.exception("reasoner failed; keeping rule decision")
             return decision
@@ -403,143 +320,9 @@ class PolicyEngine:
             decision.metadata["observations"] = ref.observations
         return decision
 
-    # ----------------------------------------------------------------- sweep
-    def _sweep_site(self, site: Site, now: datetime) -> list[Decision]:
-        cfg = self.config
-        out: list[Decision] = []
-        local = now.astimezone(site.zone)
 
-        # Close stale visits.
-        visit = self.store.open_visit(site.id)
-        if visit is not None and now - visit.last_event_at > timedelta(minutes=cfg.visit_gap_min):
-            visit.status = VisitStatus.CLOSED
-            visit.ended_at = visit.last_event_at
-            self.store.put_visit(visit)
-
-        # Expected visits whose window closed without a matching visit.
-        grace = timedelta(minutes=cfg.match_grace_min)
-        for exp in self.store.expected(site.id):
-            for ws, we in exp.windows_between(now - timedelta(hours=24), now, site.zone):
-                if we + grace > now:
-                    continue
-                key = f"{exp.id}:{ws.date().isoformat()}"
-                if self.store.decision_for_rule(site.id, "no_show", since=ws - timedelta(days=1), key=key):
-                    continue
-                matched = any(
-                    v.expected_visit_id == exp.id and ws - grace <= v.started_at <= we + grace
-                    for v in self.store.visits(site.id, since=ws - grace)
-                )
-                if matched:
-                    continue
-                person = self.store.get_person(exp.person_id) if exp.person_id else None
-                who = person.name if person else exp.label
-                dec = Decision(
-                    site_id=site.id, event_id=None, created_at=now, action=Action.NOTIFY, severity=Severity.MEDIUM,
-                    rule="no_show", reason=f"No visit matched the expected window {ws.astimezone(site.zone):%a %H:%M}-{we.astimezone(site.zone):%H:%M}.",
-                    message=f"{who} did not show up for the {ws.astimezone(site.zone).strftime('%I:%M %p').lstrip('0')} visit.",
-                    confidence=0.7, matched_expected_visit_id=exp.id, matched_person_id=exp.person_id,
-                    suggested_actions=[SuggestedAction(kind="call_person", label=f"Call {who}", target_person_id=exp.person_id)] if exp.person_id else [],
-                    metadata={"key": key},
-                )
-                out.append(self.store.put_decision(dec))
-
-        # Inactivity (homes only, during the day, when history says the door is normally used daily).
-        if site.kind is SiteKind.HOME and 9 <= local.hour <= 21:
-            last = self.store.get_state(site.id, "last_presence_at")
-            routine = self._routine(site, now)
-            if last and (routine.expects_daily_activity() or site.metadata.get("expect_daily_activity")):
-                last_at = datetime.fromisoformat(last)
-                hours = (now - last_at).total_seconds() / 3600
-                key = local.date().isoformat()
-                if hours >= cfg.inactivity_hours and not self.store.decision_for_rule(site.id, "inactivity", since=now - timedelta(days=1), key=key):
-                    out.append(
-                        self.store.put_decision(
-                            Decision(
-                                site_id=site.id, event_id=None, created_at=now, action=Action.NOTIFY, severity=Severity.MEDIUM,
-                                rule="inactivity", reason=f"No one has been at the door for {hours:.0f} hours; this home usually has daily activity.",
-                                message=f"Nothing has happened at the front door for about {hours:.0f} hours, which is unusual for {site.name}.",
-                                confidence=0.6, suggested_actions=[SuggestedAction(kind="call_resident", label="Check in by phone")],
-                                metadata={"key": key},
-                            )
-                        )
-                    )
-
-        # Doors left open.
-        for key_name, opened in self._door_states(site):
-            minutes = (now - opened).total_seconds() / 60
-            device_id = key_name.split(":", 1)[1]
-            if minutes >= cfg.door_open_notify_min and not self.store.decision_for_rule(site.id, "door_left_open", since=opened, key=device_id):
-                out.append(
-                    self.store.put_decision(
-                        Decision(
-                            site_id=site.id, event_id=None, created_at=now, action=Action.NOTIFY, severity=Severity.LOW,
-                            rule="door_left_open", reason=f"Contact sensor has reported open for {minutes:.0f} minutes.",
-                            message=f"The door has been open for about {minutes:.0f} minutes.", confidence=0.8,
-                            metadata={"key": device_id},
-                        )
-                    )
-                )
-        return out
-
-    def _door_states(self, site: Site) -> list[tuple[str, datetime]]:
-        return [
-            (key, datetime.fromisoformat(value))
-            for key, value in self.store.states_with_prefix(site.id, "door_open:").items()
-            if value
-        ]
-
-
-# ---------------------------------------------------------------------- helpers
 def _rank(s: Severity) -> int:
     return SEVERITY_ORDER.index(s)
-
-
-def _within(visit: Visit, minutes: int) -> bool:
-    return (visit.last_event_at - visit.started_at) <= timedelta(minutes=minutes)
-
-
-def _who(match: _Match | None) -> str:
-    if match is None:
-        return "Someone"
-    if match.person:
-        role = match.person.role.value
-        return f"{match.person.name} ({role})" if role != "other" else match.person.name
-    return match.expected.label
-
-
-def _base(site: Site, ev: Event, visit: Visit | None, match: _Match | None, anomaly: float):
-    def make(
-        action: Action,
-        severity: Severity,
-        rule: str,
-        reason: str,
-        message: str,
-        *,
-        actions: list[SuggestedAction] | None = None,
-        confidence: float = 0.7,
-        key: str | None = None,
-    ) -> Decision:
-        acts = actions or []
-        return Decision(
-            site_id=site.id,
-            event_id=ev.id,
-            visit_id=visit.id if visit else None,
-            created_at=ev.occurred_at,
-            action=action,
-            severity=severity,
-            rule=rule,
-            reason=reason,
-            message=message,
-            confidence=confidence,
-            anomaly_score=round(anomaly, 3),
-            requires_confirmation=any(a.sensitive for a in acts),
-            suggested_actions=acts,
-            matched_person_id=match.person.id if match and match.person else None,
-            matched_expected_visit_id=match.expected.id if match else None,
-            metadata={"key": key} if key else {},
-        )
-
-    return make
 
 
 __all__ = ["PolicyConfig", "PolicyEngine"]

@@ -37,3 +37,15 @@ the way, what I did instead, and what would have helped.
 
 - **Friction:** Windows is not listed for the Alexa AI CLI environment.
 - **Did instead:** plan to run the CLI in WSL2 Ubuntu.
+
+## 2026-09-25 — Ring: the Token Exchange URL request is not documented
+
+- **Tried:** implement the one-way account-linking flow from the API documentation.
+- **Friction:** the docs say Ring "sends the authorization code directly to your Token
+  Exchange URL (backend-to-backend)" but never show the request: method, headers, content
+  type or field names. The Account Link redirect is documented (`nonce`, `time` in ms), the
+  token exchange and nonce math are documented, the inbound call is not.
+- **Did instead:** the library takes a bare `code` string; the app's route accepts both JSON
+  and form bodies and logs the first real request shape from staging.
+- **Would help:** one example request in the docs, and a "send test code" button in the
+  developer console.

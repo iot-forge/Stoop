@@ -122,3 +122,80 @@ def test_deterministic_reasoner_adds_context(store, site, people):
     refined = [d for d in decisions if d.refined_by == "deterministic"]
     assert refined, "expected at least one refined decision"
     assert any("minute" in d.message or "time today" in d.message for d in refined)
+
+
+def test_expected_departure_is_not_a_stranger(warm_engine, site, aide_schedule, people):
+    """Aide arrives inside her window, leaves 90 minutes later in quiet hours: no alerts."""
+    # Wednesday 9:50 arrival (window 9:00-10:30, stay 90 min) -> departure ~11:20, past window + grace.
+    events = _events("aide_visit", local(2026, 9, 23, 9, 50))
+    decisions = [d for d in (warm_engine.handle(e) for e in events) if d]
+    rules = [d.rule for d in decisions]
+    assert "expected_arrival" in rules and "expected_exit" in rules
+    assert not any(d.action in (Action.NOTIFY, Action.ESCALATE) and d.severity is not Severity.INFO for d in decisions), rules
+    # The departure events name her.
+    assert any("Maria" in d.message and "left" in d.message for d in decisions)
+
+
+def test_expected_departure_in_quiet_hours(store, site, people):
+    from datetime import time
+
+    from stoop import ExpectedVisit, PolicyEngine
+
+    store.put_expected(ExpectedVisit(site_id=site.id, label="Evening aide", person_id=people["maria"].id, days_of_week=[0, 1, 2, 3, 4], local_start=time(21, 0), local_end=time(21, 30), expected_duration_min=90))
+    engine = PolicyEngine(store)
+    events = _events("aide_visit", local(2026, 9, 22, 21, 5))  # leaves ~22:35, inside quiet hours
+    decisions = [d for d in (engine.handle(e) for e in events) if d]
+    assert "night_door_open" not in [d.rule for d in decisions]
+    assert "night_presence" not in [d.rule for d in decisions]
+    assert "expected_exit" in [d.rule for d in decisions]
+    # But a stranger two hours after she left is still a stranger.
+    later = [d for d in (engine.handle(e) for e in _events("lingering_stranger", local(2026, 9, 23, 0, 40))) if d]
+    assert any(d.rule == "night_doorbell" for d in later)
+
+
+def test_stranger_during_aide_stay_still_alerts(store, site, people):
+    """A ring while the aide is inside is not the aide leaving; it is a visitor to judge."""
+    from datetime import time
+
+    from stoop import ExpectedVisit, PolicyEngine
+
+    store.put_expected(ExpectedVisit(site_id=site.id, label="Evening aide", person_id=people["maria"].id, days_of_week=[0, 1, 2, 3, 4], local_start=time(21, 0), local_end=time(21, 30), expected_duration_min=90))
+    engine = PolicyEngine(store)
+    # Arrival only (first four steps: motion, ring, door open, door close) at 21:05.
+    arrival = _events("aide_visit", local(2026, 9, 22, 21, 5))[:4]
+    for e in arrival:
+        engine.handle(e)
+    # An hour later, past the arrival window but inside her stay, a stranger lingers and rings twice.
+    stranger = [d for d in (engine.handle(e) for e in _events("lingering_stranger", local(2026, 9, 22, 22, 5))) if d]
+    rules = [d.rule for d in stranger]
+    assert "unknown_visitor" in rules or "night_doorbell" in rules, rules
+    assert not any("Maria" in d.message for d in stranger)
+    # Her real departure (door opens from inside, then she is seen outside) is still hers.
+    exit_events = _events("aide_visit", local(2026, 9, 22, 21, 5))[4:]
+    departure = [d for d in (engine.handle(e) for e in exit_events) if d]
+    assert "expected_exit" in [d.rule for d in departure]
+    assert not any(d.action in (Action.NOTIFY, Action.ESCALATE) for d in departure)
+
+
+def test_one_visitor_one_open_alert(warm_engine, site, people):
+    """A night courier: presence alert, then the ring upgrades it. Only the ring stays open."""
+    events = _events("delivery", local(2026, 9, 22, 23, 59))
+    decisions = [d for d in (warm_engine.handle(e) for e in events) if d]
+    rules = [d.rule for d in decisions]
+    assert "night_presence" in rules and "night_doorbell" in rules
+    open_alerts = warm_engine.store.decisions(site.id, unacknowledged_only=True)
+    open_rules = [d.rule for d in open_alerts if d.severity is not Severity.INFO]
+    assert open_rules == ["night_doorbell"], open_rules
+    presence = next(d for d in warm_engine.store.decisions(site.id, limit=50) if d.rule == "night_presence")
+    assert presence.acknowledged_by and presence.acknowledged_by.startswith("superseded:")
+    # The package note is informational and stays.
+    assert any(d.rule == "package_delivered" for d in open_alerts)
+
+
+def test_night_door_open_is_a_single_alert(warm_engine, site, people):
+    """Door opens from inside at night, then the resident is seen outside: one alert, not two."""
+    for e in play_scenario(BUILTIN["delivery"], site_id=site.id, start=local(2026, 9, 22, 20, 30)):
+        warm_engine.handle(e)  # a package from earlier must not turn the resident into a "risk"
+    decisions = [d for d in (warm_engine.handle(e) for e in _events("night_door_open", local(2026, 9, 23, 2, 15))) if d]
+    rules = [(d.rule, d.action.value) for d in decisions]
+    assert rules == [("night_door_open", "notify"), ("stepped_outside", "log")], rules

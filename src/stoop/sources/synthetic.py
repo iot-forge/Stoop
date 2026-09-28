@@ -95,9 +95,13 @@ BUILTIN: dict[str, Scenario] = {
 
 
 def play_scenario(
-    scenario: Scenario, *, site_id: str, start: datetime, label: str | None = None
+    scenario: Scenario, *, site_id: str, start: datetime, label: str | None = None, learn: bool = True
 ) -> list[Event]:
-    """Materialize a scenario as events beginning at ``start`` (must be tz-aware)."""
+    """Materialize a scenario as events beginning at ``start`` (must be tz-aware).
+
+    ``learn=False`` marks the events so the policy engine judges them but leaves them out of
+    routine learning; use it for demo scenes replayed on top of real or baseline history.
+    """
     if start.tzinfo is None:
         raise ValueError("start must be timezone-aware")
     label = label or scenario.name
@@ -117,7 +121,7 @@ def play_scenario(
                 occurred_at=at,
                 sensor=step.sensor,
                 dedupe_key=key,
-                raw={"scenario": scenario.name, "step": i, "synthetic": True},
+                raw={"scenario": scenario.name, "step": i, "synthetic": True, "label": label, "learn": learn},
             )
         )
     return out
