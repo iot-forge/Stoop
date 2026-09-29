@@ -84,6 +84,14 @@ class Store:
         rows = self._rows("SELECT json FROM sites WHERE id=?", (site_id,))
         return Site.model_validate_json(rows[0]["json"]) if rows else None
 
+    def delete_site(self, site_id: str) -> None:
+        """Remove a site and everything recorded for it."""
+        with self._lock:
+            for table in ("events", "persons", "expected_visits", "visits", "decisions", "kv"):
+                self._conn.execute(f"DELETE FROM {table} WHERE site_id=?", (site_id,))
+            self._conn.execute("DELETE FROM sites WHERE id=?", (site_id,))
+            self._conn.commit()
+
     def list_sites(self) -> list[Site]:
         return [Site.model_validate_json(r["json"]) for r in self._rows("SELECT json FROM sites ORDER BY id")]
 
@@ -154,6 +162,9 @@ class Store:
     def get_person(self, person_id: str) -> Person | None:
         rows = self._rows("SELECT json FROM persons WHERE id=?", (person_id,))
         return Person.model_validate_json(rows[0]["json"]) if rows else None
+
+    def delete_person(self, person_id: str) -> None:
+        self._exec("DELETE FROM persons WHERE id=?", (person_id,))
 
     def persons(self, site_id: str) -> list[Person]:
         return [Person.model_validate_json(r["json"]) for r in self._rows("SELECT json FROM persons WHERE site_id=? ORDER BY id", (site_id,))]

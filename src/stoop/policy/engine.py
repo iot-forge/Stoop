@@ -103,7 +103,7 @@ class PolicyEngine:
             visit=visit,
             match=match,
             anomaly=routine.anomaly(event.key, event.occurred_at),
-            quiet=self._in_quiet_hours(local),
+            quiet=self._in_quiet_hours(local, site),
             people=self.store.persons(site.id),
         )
         decision = self.rules.evaluate(ctx)
@@ -155,6 +155,7 @@ class PolicyEngine:
             EventKind.DEVICE_OFFLINE,
             EventKind.SENSOR_ALERT,
             EventKind.SENSOR_CLEARED,
+            EventKind.ACCOUNT,
             EventKind.OTHER,
         ):
             return None
@@ -241,9 +242,21 @@ class PolicyEngine:
         if event.is_presence:
             self.store.set_state(site.id, "last_presence_at", event.occurred_at.isoformat())
 
-    def _in_quiet_hours(self, local: datetime) -> bool:
-        s, e = self.config.quiet_start_hour, self.config.quiet_end_hour
+    def quiet_hours(self, site: Site | None = None) -> tuple[int, int]:
+        """(start_hour, end_hour) for a site: ``site.metadata["quiet_start"/"quiet_end"]`` override the config."""
+        meta = site.metadata if site is not None else {}
+        try:
+            s = int(meta.get("quiet_start", self.config.quiet_start_hour))
+            e = int(meta.get("quiet_end", self.config.quiet_end_hour))
+        except (TypeError, ValueError):
+            s, e = self.config.quiet_start_hour, self.config.quiet_end_hour
+        return s % 24, e % 24
+
+    def _in_quiet_hours(self, local: datetime, site: Site | None = None) -> bool:
+        s, e = self.quiet_hours(site)
         h = local.hour
+        if s == e:
+            return False
         return (h >= s or h < e) if s > e else (s <= h < e)
 
     def _suppress_repeats(self, decision: Decision) -> Decision:

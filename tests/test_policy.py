@@ -199,3 +199,41 @@ def test_night_door_open_is_a_single_alert(warm_engine, site, people):
     decisions = [d for d in (warm_engine.handle(e) for e in _events("night_door_open", local(2026, 9, 23, 2, 15))) if d]
     rules = [(d.rule, d.action.value) for d in decisions]
     assert rules == [("night_door_open", "notify"), ("stepped_outside", "log")], rules
+
+
+def test_quiet_hours_per_site(store, site, people):
+    """A home can set its own quiet hours; 8:30 PM is quiet when the home says quiet starts at 8."""
+    from stoop import PolicyEngine
+
+    site.metadata["quiet_start"] = 20
+    site.metadata["quiet_end"] = 6
+    store.put_site(site)
+    engine = PolicyEngine(store)
+    assert engine.quiet_hours(site) == (20, 6)
+    decisions = [d for d in (engine.handle(e) for e in _events("lingering_stranger", local(2026, 9, 22, 20, 30))) if d]
+    assert "night_doorbell" in [d.rule for d in decisions]
+    # Same hour at a home with default quiet hours (22-7) is an ordinary unknown visitor.
+    other = store.put_site(type(site)(id="home-2", name="Other", timezone=site.timezone))
+    decisions = [d for d in (engine.handle(e) for e in _events("lingering_stranger", local(2026, 9, 22, 20, 30), site_id=other.id)) if d]
+    assert "unknown_visitor" in [d.rule for d in decisions] and "night_doorbell" not in [d.rule for d in decisions]
+
+
+def test_delete_person(store, site, people):
+    store.delete_person(people["sam"].id) if "sam" in people else store.delete_person(people["maria"].id)
+    assert all(p.name != ("Sam" if "sam" in people else "Maria") for p in store.persons(site.id))
+
+
+def test_sensor_alerts_are_graded(engine, site, people):
+    """Tamper is a chore, temperature is worth a look, carbon monoxide is an emergency."""
+    from stoop.events import Event, make_event_id
+
+    def ev(sensor, key):
+        return Event(id=make_event_id("t", key), site_id=site.id, source="test", kind=EventKind.SENSOR_ALERT, sensor=sensor,
+                     device_id=f"dev-{sensor}", device_name="Outside Door Sensor", occurred_at=MONDAY, dedupe_key=key)
+
+    tamper = engine.handle(ev("tamper", "k1"))
+    assert tamper.rule == "sensor_tamper" and tamper.severity is Severity.LOW and not tamper.requires_confirmation
+    temp = engine.handle(ev("temperature", "k2"))
+    assert temp.rule == "sensor_comfort" and temp.severity is Severity.MEDIUM and not temp.requires_confirmation
+    co = engine.handle(ev("co", "k3"))
+    assert co.rule == "sensor_alert" and co.action is Action.ESCALATE and co.requires_confirmation

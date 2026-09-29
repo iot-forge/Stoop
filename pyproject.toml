@@ -27,7 +27,7 @@ aws = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/uladzislau-bayouski/stoop"
+Homepage = "https://github.com/iot-forge/Stoop"
 
 [build-system]
 requires = ["uv_build>=0.12.19,<0.13.0"]

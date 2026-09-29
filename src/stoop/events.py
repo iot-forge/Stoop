@@ -25,6 +25,7 @@ class EventKind(StrEnum):
     DEVICE_OFFLINE = "device_offline"
     SENSOR_ALERT = "sensor_alert"
     SENSOR_CLEARED = "sensor_cleared"
+    ACCOUNT = "account"  # link/unlink, devices shared or removed, subscription changes: not door activity
     OTHER = "other"
 
 

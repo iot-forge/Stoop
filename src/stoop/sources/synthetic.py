@@ -108,7 +108,7 @@ def play_scenario(
     out: list[Event] = []
     for i, step in enumerate(sorted(scenario.steps, key=lambda s: s.offset_s)):
         at = start + timedelta(seconds=step.offset_s)
-        key = f"{label}:{start.isoformat()}:{i}"
+        key = f"{site_id}:{label}:{start.isoformat()}:{i}"  # site in the key: the same scene at two homes is two events
         out.append(
             Event(
                 id=make_event_id(SOURCE, key),

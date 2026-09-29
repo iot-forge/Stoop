@@ -102,3 +102,20 @@ def test_unlearned_events_are_judged_but_not_taught(store):
             other.handle(e)
         night += timedelta(days=1)
     assert other.routine_for("s", night).anomaly("motion:human", night) < 0.9
+
+
+def test_delete_site_removes_everything(store):
+    from stoop import PolicyEngine, Site
+    from stoop.sources.synthetic import BUILTIN, play_scenario
+
+    store.put_site(Site(id="a", name="A"))
+    store.put_site(Site(id="b", name="B"))
+    eng = PolicyEngine(store)
+    for sid in ("a", "b"):
+        for e in play_scenario(BUILTIN["lingering_stranger"], site_id=sid, start=MONDAY):
+            eng.handle(e)
+    store.set_state("a", "k", 1)
+    store.delete_site("a")
+    assert store.get_site("a") is None and store.events("a") == [] and store.decisions("a") == [] and store.visits("a") == []
+    assert store.get_state("a", "k") is None
+    assert store.get_site("b") is not None and store.events("b")

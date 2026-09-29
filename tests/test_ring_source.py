@@ -86,3 +86,41 @@ def test_history_import_from_emulator():
     assert events[0].detected is Detected.UNKNOWN
     assert events[0].occurred_at < events[1].occurred_at
     assert all(e.source == "ring" for e in events)
+
+
+def test_history_follows_url_encoded_cursor_and_stops_on_empty_pages():
+    """Real Ring: links.next is URL-encoded, and pages can be empty while the cursor moves back."""
+    from stoop.sources.ring import next_page_key
+
+    assert next_page_key("/v1/history/devices/X/events?page%5Blimit%5D=5&page%5Bkey%5D=2026-09-28T23%3A12%3A58.054Z") == "2026-09-28T23:12:58.054Z"
+    assert next_page_key("/v1/x?page[key]=abc&y=1") == "abc"
+    assert next_page_key(None) is None and next_page_key("/v1/x?y=1") is None
+
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(dict(request.url.params))
+        n = len(calls)
+        # One real event, then Ring keeps paging back with empty pages.
+        data = [{"type": "history-events", "id": "e1", "attributes": {"event_type": "ding", "start": 1790000000000}}] if n == 1 else []
+        return httpx.Response(200, json={"data": data, "links": {"next": f"/v1/history/devices/D/events?page%5Bkey%5D=2026-09-{28 - n:02d}T00%3A00%3A00Z"}})
+
+    with RingHistory("t", base_url="http://ring", transport=httpx.MockTransport(handler)) as ring:
+        events = ring.events("home", "D")
+    assert [e.kind for e in events] == [EventKind.BUTTON_PRESS]
+    assert calls[1]["page[key]"] == "2026-09-27T00:00:00Z"  # decoded cursor was sent back
+    assert len(calls) == 4  # 1 page with data + 3 empty, then stop
+
+
+def test_account_events_are_not_door_activity():
+    from stoop import Action, PolicyEngine, Store
+
+    for etype in ("app_integration_added", "device_added", "device_removed", "subscription_deactivated"):
+        body, sig = _signed(etype)
+        ev = parse_ring_webhook(body, site_id="s", signing_key=KEY, signature=sig, device_names={"ava1.ring.device.ABC": "Front Door"})
+        assert ev.kind is EventKind.ACCOUNT and ev.sensor == etype
+    engine = PolicyEngine(Store(":memory:"))
+    body, sig = _signed("device_added")
+    d = engine.handle(parse_ring_webhook(body, site_id="s", signing_key=KEY, signature=sig, device_names={"ava1.ring.device.ABC": "Front Door"}))
+    assert d.rule == "account_change" and d.action is Action.IGNORE and d.visit_id is None
+    assert d.message == "Front Door was shared with this app."

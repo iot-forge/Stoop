@@ -63,6 +63,8 @@ class Person(_Model):
     email: str | None = None
     notes: str | None = None
     trusted: bool = True
+    # App-level preferences (notification channels, thresholds, ...). Free-form on purpose.
+    preferences: dict[str, Any] = Field(default_factory=dict)
 
 
 class ExpectedVisit(_Model):

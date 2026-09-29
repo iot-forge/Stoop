@@ -17,8 +17,37 @@ K = EventKind
 # ------------------------------------------------------------------ sensors & devices
 
 
+MAINTENANCE_SENSORS = {"tamper"}
+COMFORT_SENSORS = {"temperature", "humidity", "pm25"}
+
+
+def sensor_maintenance(ctx: RuleContext) -> Decision | None:
+    """Tamper usually means a cover is loose or a sensor was knocked off its mount: a chore, not an emergency."""
+    if ctx.event.sensor not in MAINTENANCE_SENSORS:
+        return None
+    return ctx.decide(
+        Action.NOTIFY, Severity.LOW, "sensor_tamper",
+        f"{ctx.where} reports its cover is open or it was moved.",
+        f"{ctx.where} reports tampering at {ctx.when}. Usually the cover isn't fully closed; worth checking it's mounted.",
+        actions=ctx.actions("check_device"), confidence=0.8, key=f"{ctx.event.device_id}:tamper",
+    )
+
+
+def sensor_comfort(ctx: RuleContext) -> Decision | None:
+    """Temperature, humidity and air quality out of range: worth a look, not an emergency."""
+    if ctx.event.sensor not in COMFORT_SENSORS:
+        return None
+    label = (ctx.event.sensor or "sensor").replace("pm25", "air quality").replace("_", " ")
+    return ctx.decide(
+        Action.NOTIFY, Severity.MEDIUM, "sensor_comfort",
+        f"{label.capitalize()} is outside its normal range at {ctx.where}.",
+        f"{label.capitalize()} alert at {ctx.where} at {ctx.when}.",
+        actions=ctx.actions("call_family"), confidence=0.8, key=f"{ctx.event.device_id}:{ctx.event.sensor}",
+    )
+
+
 def sensor_alert(ctx: RuleContext) -> Decision | None:
-    """Environmental or tamper alert: escalate, with emergency contact behind a confirmation."""
+    """Flood, freeze, carbon monoxide and similar: escalate, with emergency contact behind a confirmation."""
     label = (ctx.event.sensor or "sensor").replace("_", " ")
     return ctx.decide(
         Action.ESCALATE, Severity.HIGH, "sensor_alert",
@@ -37,6 +66,22 @@ def device_offline(ctx: RuleContext) -> Decision | None:
 
 def device_online(ctx: RuleContext) -> Decision | None:
     return ctx.decide(Action.LOG, Severity.INFO, "device_online", "Device back online.", f"{ctx.where} is back online.")
+
+
+_ACCOUNT_TEXT = {
+    "app_integration_added": "Connected to Ring.",
+    "app_integration_removed": "Disconnected from Ring.",
+    "device_added": "{where} was shared with this app.",
+    "device_removed": "{where} is no longer shared with this app.",
+    "subscription_activated": "Ring subscription active.",
+    "subscription_deactivated": "Ring subscription ended; some features may stop working.",
+}
+
+
+def account_change(ctx: RuleContext) -> Decision | None:
+    """Account housekeeping from Ring. Recorded for the audit trail, never shown as door activity."""
+    text = _ACCOUNT_TEXT.get(ctx.event.sensor or "", "Ring account update.").format(where=ctx.event.device_name or "A device")
+    return ctx.decide(Action.IGNORE, Severity.INFO, "account_change", "Account change reported by Ring.", text)
 
 
 def informational(ctx: RuleContext) -> Decision | None:
@@ -212,10 +257,13 @@ def routine_presence(ctx: RuleContext) -> Decision | None:
 def home_rules() -> RuleRegistry:
     """A fresh copy of the default home rule set, in evaluation order."""
     reg = RuleRegistry()
+    reg.add(sensor_maintenance, kinds={K.SENSOR_ALERT})
+    reg.add(sensor_comfort, kinds={K.SENSOR_ALERT})
     reg.add(sensor_alert, kinds={K.SENSOR_ALERT})
     reg.add(sensor_cleared, kinds={K.SENSOR_CLEARED})
     reg.add(device_offline, kinds={K.DEVICE_OFFLINE})
     reg.add(device_online, kinds={K.DEVICE_ONLINE})
+    reg.add(account_change, kinds={K.ACCOUNT})
     reg.add(informational, kinds={K.LIVE_VIEW, K.OTHER})
     reg.add(door_closed, kinds={K.DOOR_CLOSED})
     reg.add(expected_entry, kinds={K.DOOR_OPENED})

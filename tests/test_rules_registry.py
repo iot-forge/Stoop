@@ -15,7 +15,7 @@ def _play(engine: PolicyEngine, name: str, start, site_id="home-1"):
 def test_default_registry_is_ordered_and_named():
     reg = home_rules()
     names = reg.names()
-    assert names[0] == "sensor_alert" and names[-1] == "routine_presence"
+    assert names[0] == "sensor_maintenance" and names[-1] == "routine_presence"
     assert names.index("lingering") < names.index("stepped_outside") < names.index("package_at_risk")
     assert names.index("expected_arrival") < names.index("night_doorbell") < names.index("unknown_visitor")
     assert names.index("package_at_risk") < names.index("night_presence") < names.index("unusual_time")

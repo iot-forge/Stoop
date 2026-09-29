@@ -47,6 +47,14 @@ _SENSOR_CLEARS = {
     "pm25_cleared": "pm25",
     "co_cleared": "co",
 }
+_ACCOUNT_EVENTS = {
+    "app_integration_added",
+    "app_integration_removed",
+    "device_added",
+    "device_removed",
+    "subscription_activated",
+    "subscription_deactivated",
+}
 _DETECTED = {
     "human": Detected.HUMAN,
     "vehicle": Detected.VEHICLE,
@@ -89,6 +97,8 @@ def _map_webhook_kind(event_type: str) -> tuple[EventKind, str | None]:
         return EventKind.SENSOR_ALERT, _SENSOR_ALERTS[event_type]
     if event_type in _SENSOR_CLEARS:
         return EventKind.SENSOR_CLEARED, _SENSOR_CLEARS[event_type]
+    if event_type in _ACCOUNT_EVENTS:
+        return EventKind.ACCOUNT, event_type
     return EventKind.OTHER, None
 
 
@@ -252,6 +262,7 @@ class RingHistory:
         until: datetime | None = None,
         page_size: int = 100,
         max_pages: int = 50,
+        max_empty_pages: int = 3,
     ) -> Iterator[dict[str, Any]]:
         """Yield raw ``history-events`` resources, newest first, following ``links.next``."""
         params: dict[str, Any] = {"page[limit]": page_size}
@@ -260,13 +271,21 @@ class RingHistory:
         if until is not None:
             params["filter[end]"] = int(until.timestamp() * 1000)
         path = f"/v1/history/devices/{device_id}/events"
+        empty_run, last_key = 0, None
         for _ in range(max_pages):
             doc = self._get(path, params=params)
-            yield from doc.get("data", [])
-            nxt = (doc.get("links") or {}).get("next")
-            if not nxt or "page[key]=" not in nxt:
+            data = doc.get("data", []) or []
+            yield from data
+            # Ring may return empty pages while the cursor keeps moving back in time (history from
+            # before the app was linked is withheld). Stop after a few in a row instead of walking months.
+            empty_run = 0 if data else empty_run + 1
+            if empty_run >= max_empty_pages:
                 return
-            params = {**params, "page[key]": nxt.split("page[key]=", 1)[1].split("&", 1)[0]}
+            key = next_page_key((doc.get("links") or {}).get("next"))
+            if not key or key == last_key:
+                return
+            last_key = key
+            params = {**params, "page[key]": key}
 
     def events(
         self,
@@ -285,6 +304,16 @@ class RingHistory:
                 out.append(ev)
         out.sort(key=lambda e: e.occurred_at)
         return out
+
+
+def next_page_key(next_link: str | None) -> str | None:
+    """Cursor from a JSON:API ``links.next``. Ring URL-encodes it (``page%5Bkey%5D=...``)."""
+    if not next_link:
+        return None
+    from urllib.parse import parse_qs, urlsplit
+
+    values = parse_qs(urlsplit(next_link).query).get("page[key]")
+    return values[0] if values else None
 
 
 def history_item_to_event(

@@ -49,3 +49,15 @@ the way, what I did instead, and what would have helped.
   and form bodies and logs the first real request shape from staging.
 - **Would help:** one example request in the docs, and a "send test code" button in the
   developer console.
+
+## 2026-09-28 — Ring history: empty pages before the link date, and an encoded cursor
+
+- **Tried:** backfill 28 days of a real linked account (five devices) to seed routine learning.
+- **Friction:** every history page returned `"data": []` while `links.next` kept moving the
+  cursor back to early August, so events exist but are withheld from a newly linked app. The
+  docs don't say that history before the link date is hidden. `links.next` is also URL-encoded
+  (`page%5Bkey%5D=`), unlike the documented examples.
+- **Did instead:** parse the cursor with a real query parser, stop after three empty pages, and
+  tell the user the routine learns from live webhooks from the moment of linking.
+- **Would help:** a sentence in the history docs on the visibility window, and either real data
+  or a clear flag on the response when older history is withheld.
