@@ -19,11 +19,7 @@ class DeterministicReasoner(Reasoner):
             return None
         notes: list[str] = []
         since = ctx.event.occurred_at - timedelta(hours=24)
-        similar = [
-            d
-            for d in ctx.recent_decisions
-            if d.rule == ctx.decision.rule and d.created_at >= since and d.id != ctx.decision.id
-        ]
+        similar = [d for d in ctx.recent_decisions if d.rule == ctx.decision.rule and d.created_at >= since and d.id != ctx.decision.id]
         if similar:
             notes.append(f"This is the {_ordinal(len(similar) + 1)} time today.")
         if ctx.anomaly_score is not None and ctx.anomaly_score >= 0.8:

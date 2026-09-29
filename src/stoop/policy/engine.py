@@ -328,7 +328,7 @@ class PolicyEngine:
             cur, new = _rank(decision.severity), _rank(ref.severity)
             decision.severity = SEVERITY_ORDER[max(cur - 1, min(cur + 1, new))]
         decision.confidence = round((decision.confidence + ref.confidence) / 2, 2)
-        decision.refined_by = self.reasoner.name
+        decision.refined_by = ref.by or self.reasoner.name
         if ref.observations:
             decision.metadata["observations"] = ref.observations
         return decision

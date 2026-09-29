@@ -17,8 +17,10 @@ This module implements the token client, PKCE helpers, nonce matching and a smal
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import hmac
+import json
 import logging
 import secrets
 import time as _time
@@ -437,3 +439,26 @@ def _oauth_error(resp: httpx.Response) -> tuple[str | None, str | None]:
             first = errs[0] or {}
             return first.get("code") or first.get("title"), first.get("detail")
     return None, resp.text[:200]
+
+
+def extract_exchange_code(body: bytes, content_type: str, query: Any) -> str | None:
+    """Ring does not document the token-exchange request shape; accept JSON, form or query."""
+    candidates = ("code", "authorization_code", "authorizationCode", "auth_code")
+    data: dict[str, Any] = {}
+    if body:
+        if "json" in content_type:
+            with contextlib.suppress(ValueError):
+                data = json.loads(body) or {}
+        elif "form" in content_type:
+            from urllib.parse import parse_qs
+
+            data = {k: v[0] for k, v in parse_qs(body.decode(errors="ignore")).items()}
+        else:
+            with contextlib.suppress(ValueError):
+                data = json.loads(body) or {}
+    for key in candidates:
+        if isinstance(data, dict) and data.get(key):
+            return str(data[key])
+        if query.get(key):
+            return str(query.get(key))
+    return None

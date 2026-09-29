@@ -42,6 +42,8 @@ class Refinement(BaseModel):
     severity: Severity | None = None
     confidence: float = Field(default=0.7, ge=0.0, le=1.0)
     observations: list[str] = Field(default_factory=list)
+    # Which reasoner actually wrote it, when a reasoner delegates to a fallback.
+    by: str | None = None
 
 
 @runtime_checkable

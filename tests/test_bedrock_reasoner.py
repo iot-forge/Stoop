@@ -26,7 +26,9 @@ def test_parse_refinement_tolerates_prose_and_fences():
 
 
 def test_bedrock_refines_and_caps_severity_step(store, site, people):
-    fake = _FakeBedrock('{"message": "A courier left a box and drove off.", "reason": "Vehicle then package.", "severity": "info", "confidence": 0.8}')
+    fake = _FakeBedrock(
+        '{"message": "A courier left a box and drove off.", "reason": "Vehicle then package.", "severity": "info", "confidence": 0.8}'
+    )
     eng = PolicyEngine(store, config=PolicyConfig(refine_always=True), reasoner=BedrockReasoner(client=fake, model_id="test"))
     events = play_scenario(BUILTIN["lingering_stranger"], site_id=site.id, start=local(2026, 9, 22, 23, 30))
     decisions = [d for d in (eng.handle(e) for e in events) if d]
@@ -60,3 +62,50 @@ def test_prompt_mentions_snapshot_when_attached(store, site, people):
     ev = play_scenario(BUILTIN["no_show"], site_id=site.id, start=local(2026, 9, 22, 12))[0]
     ctx = ReasoningContext(site=site, event=ev, decision=d, local_time=local(2026, 9, 22, 12), snapshot=b"\xff\xd8")
     assert "snapshot" in build_prompt(ctx).lower()
+
+
+def test_failure_or_rambling_falls_back_to_offline_reasoner(store, site, people):
+    from stoop.reasoning.deterministic import DeterministicReasoner
+
+    class Boom:
+        def converse(self, **kwargs):
+            raise TimeoutError("read timeout")
+
+    rambling = _FakeBedrock('{"message": "' + "word " * 100 + '"}')
+    for client in (Boom(), rambling, _FakeBedrock("not json")):
+        s2 = store  # same store; each engine judges the scene fresh
+        eng = PolicyEngine(
+            s2,
+            config=PolicyConfig(refine_always=True),
+            reasoner=BedrockReasoner(client=client, model_id="t", fallback=DeterministicReasoner()),
+        )
+        events = play_scenario(BUILTIN["lingering_stranger"], site_id=site.id, start=local(2026, 9, 23, 23, 30))
+        decisions = [d for d in (eng.handle(e) for e in events) if d]
+        refined = [d for d in decisions if d.refined_by]
+        assert all(d.refined_by == "deterministic" for d in refined)  # never labeled bedrock after a failure
+        assert all(len(d.message) < 320 for d in decisions)
+
+
+def test_prompt_is_written_for_the_reader(store, site, people):
+    from stoop.memory.models import Action, Decision, SiteKind
+    from stoop.reasoning.base import ReasoningContext
+
+    d = Decision(site_id=site.id, event_id="e", action=Action.NOTIFY, severity=Severity.HIGH, rule="r", reason="x", message="m")
+    ev = play_scenario(BUILTIN["night_door_open"], site_id=site.id, start=local(2026, 9, 22, 2, 14))[0]
+    home = build_prompt(
+        ReasoningContext(site=site.model_copy(update={"kind": SiteKind.HOME}), event=ev, decision=d, local_time=local(2026, 9, 22, 2, 14))
+    )
+    rental = build_prompt(
+        ReasoningContext(site=site.model_copy(update={"kind": SiteKind.RENTAL}), event=ev, decision=d, local_time=local(2026, 9, 22, 2, 14))
+    )
+    assert "family caregiver" in home and "host" in rental
+    assert "2:14 AM" in home
+
+
+def test_summarize_day_uses_only_clean_prose(site):
+    ok = BedrockReasoner(client=_FakeBedrock("A quiet day. The aide came at 9 as planned."), model_id="t")
+    assert ok.summarize_day(site, ["9:02 AM info: Maria arrived"]) == "A quiet day. The aide came at 9 as planned."
+    prompt = ok._client.calls[0]["messages"][0]["content"][0]["text"]
+    assert "Maria arrived" in prompt and "Never guess a name" in prompt
+    assert BedrockReasoner(client=_FakeBedrock('{"message": "x"}'), model_id="t").summarize_day(site, ["a"]) is None
+    assert ok.summarize_day(site, [], alerts=0) is None
