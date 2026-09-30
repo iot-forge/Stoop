@@ -108,7 +108,9 @@ def test_custom_sweep_check(warm_engine, site, people):
         key = f"week:{ctx.local.isocalendar().week}"
         if ctx.local.weekday() != 6 or ctx.already_decided("weekly_reassurance", key=key, since=ctx.now.replace(hour=0)):
             return []
-        return [ctx.decide(Action.NOTIFY, Severity.INFO, "weekly_reassurance", "Sunday digest.", f"A normal week at {ctx.site.name}.", key=key)]
+        return [
+            ctx.decide(Action.NOTIFY, Severity.INFO, "weekly_reassurance", "Sunday digest.", f"A normal week at {ctx.site.name}.", key=key)
+        ]
 
     warm_engine.sweeps = sweeps
     sunday = local(2026, 9, 27, 18)

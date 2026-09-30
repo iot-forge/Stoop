@@ -51,8 +51,15 @@ def test_sensor_alert_escalates_with_confirmation_gate(engine, site, people):
     from stoop.events import Event, make_event_id
 
     ev = Event(
-        id=make_event_id("t", "co1"), site_id=site.id, source="test", kind=EventKind.SENSOR_ALERT, sensor="co",
-        device_id="hallway", device_name="Hallway monitor", occurred_at=MONDAY, dedupe_key="co1",
+        id=make_event_id("t", "co1"),
+        site_id=site.id,
+        source="test",
+        kind=EventKind.SENSOR_ALERT,
+        sensor="co",
+        device_id="hallway",
+        device_name="Hallway monitor",
+        occurred_at=MONDAY,
+        dedupe_key="co1",
     )
     d = engine.handle(ev)
     assert d and d.action is Action.ESCALATE and d.severity is Severity.HIGH
@@ -141,7 +148,17 @@ def test_expected_departure_in_quiet_hours(store, site, people):
 
     from stoop import ExpectedVisit, PolicyEngine
 
-    store.put_expected(ExpectedVisit(site_id=site.id, label="Evening aide", person_id=people["maria"].id, days_of_week=[0, 1, 2, 3, 4], local_start=time(21, 0), local_end=time(21, 30), expected_duration_min=90))
+    store.put_expected(
+        ExpectedVisit(
+            site_id=site.id,
+            label="Evening aide",
+            person_id=people["maria"].id,
+            days_of_week=[0, 1, 2, 3, 4],
+            local_start=time(21, 0),
+            local_end=time(21, 30),
+            expected_duration_min=90,
+        )
+    )
     engine = PolicyEngine(store)
     events = _events("aide_visit", local(2026, 9, 22, 21, 5))  # leaves ~22:35, inside quiet hours
     decisions = [d for d in (engine.handle(e) for e in events) if d]
@@ -159,7 +176,17 @@ def test_stranger_during_aide_stay_still_alerts(store, site, people):
 
     from stoop import ExpectedVisit, PolicyEngine
 
-    store.put_expected(ExpectedVisit(site_id=site.id, label="Evening aide", person_id=people["maria"].id, days_of_week=[0, 1, 2, 3, 4], local_start=time(21, 0), local_end=time(21, 30), expected_duration_min=90))
+    store.put_expected(
+        ExpectedVisit(
+            site_id=site.id,
+            label="Evening aide",
+            person_id=people["maria"].id,
+            days_of_week=[0, 1, 2, 3, 4],
+            local_start=time(21, 0),
+            local_end=time(21, 30),
+            expected_duration_min=90,
+        )
+    )
     engine = PolicyEngine(store)
     # Arrival only (first four steps: motion, ring, door open, door close) at 21:05.
     arrival = _events("aide_visit", local(2026, 9, 22, 21, 5))[:4]
@@ -228,8 +255,17 @@ def test_sensor_alerts_are_graded(engine, site, people):
     from stoop.events import Event, make_event_id
 
     def ev(sensor, key):
-        return Event(id=make_event_id("t", key), site_id=site.id, source="test", kind=EventKind.SENSOR_ALERT, sensor=sensor,
-                     device_id=f"dev-{sensor}", device_name="Outside Door Sensor", occurred_at=MONDAY, dedupe_key=key)
+        return Event(
+            id=make_event_id("t", key),
+            site_id=site.id,
+            source="test",
+            kind=EventKind.SENSOR_ALERT,
+            sensor=sensor,
+            device_id=f"dev-{sensor}",
+            device_name="Outside Door Sensor",
+            occurred_at=MONDAY,
+            dedupe_key=key,
+        )
 
     tamper = engine.handle(ev("tamper", "k1"))
     assert tamper.rule == "sensor_tamper" and tamper.severity is Severity.LOW and not tamper.requires_confirmation

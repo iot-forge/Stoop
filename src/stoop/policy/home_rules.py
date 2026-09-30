@@ -26,10 +26,14 @@ def sensor_maintenance(ctx: RuleContext) -> Decision | None:
     if ctx.event.sensor not in MAINTENANCE_SENSORS:
         return None
     return ctx.decide(
-        Action.NOTIFY, Severity.LOW, "sensor_tamper",
+        Action.NOTIFY,
+        Severity.LOW,
+        "sensor_tamper",
         f"{ctx.where} reports its cover is open or it was moved.",
         f"{ctx.where} reports tampering at {ctx.when}. Usually the cover isn't fully closed; worth checking it's mounted.",
-        actions=ctx.actions("check_device"), confidence=0.8, key=f"{ctx.event.device_id}:tamper",
+        actions=ctx.actions("check_device"),
+        confidence=0.8,
+        key=f"{ctx.event.device_id}:tamper",
     )
 
 
@@ -39,10 +43,14 @@ def sensor_comfort(ctx: RuleContext) -> Decision | None:
         return None
     label = (ctx.event.sensor or "sensor").replace("pm25", "air quality").replace("_", " ")
     return ctx.decide(
-        Action.NOTIFY, Severity.MEDIUM, "sensor_comfort",
+        Action.NOTIFY,
+        Severity.MEDIUM,
+        "sensor_comfort",
         f"{label.capitalize()} is outside its normal range at {ctx.where}.",
         f"{label.capitalize()} alert at {ctx.where} at {ctx.when}.",
-        actions=ctx.actions("call_family"), confidence=0.8, key=f"{ctx.event.device_id}:{ctx.event.sensor}",
+        actions=ctx.actions("call_family"),
+        confidence=0.8,
+        key=f"{ctx.event.device_id}:{ctx.event.sensor}",
     )
 
 
@@ -50,18 +58,37 @@ def sensor_alert(ctx: RuleContext) -> Decision | None:
     """Flood, freeze, carbon monoxide and similar: escalate, with emergency contact behind a confirmation."""
     label = (ctx.event.sensor or "sensor").replace("_", " ")
     return ctx.decide(
-        Action.ESCALATE, Severity.HIGH, "sensor_alert",
-        f"A {label} alert came from {ctx.where}.", f"{label.capitalize()} alert at {ctx.where} at {ctx.when}.",
-        actions=ctx.actions("view_live", "call_family", "contact_emergency"), confidence=0.95, key=f"{ctx.event.device_id}:{ctx.event.sensor}",
+        Action.ESCALATE,
+        Severity.HIGH,
+        "sensor_alert",
+        f"A {label} alert came from {ctx.where}.",
+        f"{label.capitalize()} alert at {ctx.where} at {ctx.when}.",
+        actions=ctx.actions("view_live", "call_family", "contact_emergency"),
+        confidence=0.95,
+        key=f"{ctx.event.device_id}:{ctx.event.sensor}",
     )
 
 
 def sensor_cleared(ctx: RuleContext) -> Decision | None:
-    return ctx.decide(Action.LOG, Severity.INFO, "sensor_cleared", "Sensor alert cleared.", f"The {ctx.event.sensor or 'sensor'} alert at {ctx.where} cleared.")
+    return ctx.decide(
+        Action.LOG,
+        Severity.INFO,
+        "sensor_cleared",
+        "Sensor alert cleared.",
+        f"The {ctx.event.sensor or 'sensor'} alert at {ctx.where} cleared.",
+    )
 
 
 def device_offline(ctx: RuleContext) -> Decision | None:
-    return ctx.decide(Action.NOTIFY, Severity.LOW, "device_offline", "The device stopped reporting.", f"{ctx.where} went offline at {ctx.when}.", actions=ctx.actions("check_device"), key=ctx.event.device_id)
+    return ctx.decide(
+        Action.NOTIFY,
+        Severity.LOW,
+        "device_offline",
+        "The device stopped reporting.",
+        f"{ctx.where} went offline at {ctx.when}.",
+        actions=ctx.actions("check_device"),
+        key=ctx.event.device_id,
+    )
 
 
 def device_online(ctx: RuleContext) -> Decision | None:
@@ -101,7 +128,13 @@ def expected_entry(ctx: RuleContext) -> Decision | None:
     if ctx.match is None:
         return None
     if ctx.match.departing:
-        return ctx.decide(Action.LOG, Severity.INFO, "expected_exit", f"{ctx.who} arrived earlier and is within the expected stay.", f"{ctx.who} left at {ctx.when}.")
+        return ctx.decide(
+            Action.LOG,
+            Severity.INFO,
+            "expected_exit",
+            f"{ctx.who} arrived earlier and is within the expected stay.",
+            f"{ctx.who} left at {ctx.when}.",
+        )
     return ctx.decide(Action.LOG, Severity.INFO, "expected_entry", f"{ctx.who} is expected now.", f"{ctx.who} went in at {ctx.when}.")
 
 
@@ -110,17 +143,23 @@ def night_door_open(ctx: RuleContext) -> Decision | None:
     if not (ctx.quiet and not ctx.arrived_first and ctx.site.kind is SiteKind.HOME):
         return None
     return ctx.decide(
-        Action.NOTIFY, Severity.HIGH, "night_door_open",
+        Action.NOTIFY,
+        Severity.HIGH,
+        "night_door_open",
         "The door opened during quiet hours with nobody seen outside first, which can mean someone left the house.",
         f"{ctx.where} opened at {ctx.when} and nobody had come to the door first.",
-        actions=ctx.actions("view_live", "call_family"), confidence=0.8, key=ctx.visit_key,
+        actions=ctx.actions("view_live", "call_family"),
+        confidence=0.8,
+        key=ctx.visit_key,
     )
 
 
 def door_open_from_inside(ctx: RuleContext) -> Decision | None:
     if ctx.arrived_first:
         return None
-    return ctx.decide(Action.LOG, Severity.LOW, "door_open_from_inside", "Door opened from inside.", f"{ctx.where} opened from inside at {ctx.when}.")
+    return ctx.decide(
+        Action.LOG, Severity.LOW, "door_open_from_inside", "Door opened from inside.", f"{ctx.where} opened from inside at {ctx.when}."
+    )
 
 
 def door_opened(ctx: RuleContext) -> Decision | None:
@@ -134,10 +173,21 @@ def expected_arrival(ctx: RuleContext) -> Decision | None:
     if ctx.match is None:
         return None
     if ctx.match.departing:
-        return ctx.decide(Action.LOG, Severity.INFO, "expected_presence", f"{ctx.who} is still within the expected stay.", f"{ctx.who} rang {ctx.where} at {ctx.when} on the way out.")
+        return ctx.decide(
+            Action.LOG,
+            Severity.INFO,
+            "expected_presence",
+            f"{ctx.who} is still within the expected stay.",
+            f"{ctx.who} rang {ctx.where} at {ctx.when} on the way out.",
+        )
     return ctx.decide(
-        Action.NOTIFY, Severity.INFO, "expected_arrival", f"{ctx.who} is scheduled for this window.",
-        f"{ctx.who} arrived at {ctx.when}, as scheduled.", confidence=0.9, key=ctx.visit_key,
+        Action.NOTIFY,
+        Severity.INFO,
+        "expected_arrival",
+        f"{ctx.who} is scheduled for this window.",
+        f"{ctx.who} arrived at {ctx.when}, as scheduled.",
+        confidence=0.9,
+        key=ctx.visit_key,
     )
 
 
@@ -145,9 +195,14 @@ def night_doorbell(ctx: RuleContext) -> Decision | None:
     if not ctx.quiet:
         return None
     return ctx.decide(
-        Action.NOTIFY, Severity.HIGH, "night_doorbell", "Doorbell during quiet hours with no expected visitor.",
+        Action.NOTIFY,
+        Severity.HIGH,
+        "night_doorbell",
+        "Doorbell during quiet hours with no expected visitor.",
         f"Someone rang {ctx.where} at {ctx.when}. Nobody was expected.",
-        actions=ctx.actions("view_live", "call_family", "mark_expected"), confidence=0.85, key=ctx.visit_key,
+        actions=ctx.actions("view_live", "call_family", "mark_expected"),
+        confidence=0.85,
+        key=ctx.visit_key,
     )
 
 
@@ -155,17 +210,27 @@ def lingering_ring(ctx: RuleContext) -> Decision | None:
     if not ctx.lingering:
         return None
     return ctx.decide(
-        Action.NOTIFY, Severity.MEDIUM, "lingering", "Repeated presence and ringing without being let in.",
+        Action.NOTIFY,
+        Severity.MEDIUM,
+        "lingering",
+        "Repeated presence and ringing without being let in.",
         f"Someone has been at {ctx.where} for several minutes and rang again at {ctx.when}.",
-        actions=ctx.actions("view_live", "call_family", "mark_expected"), confidence=0.75, key=ctx.visit_key,
+        actions=ctx.actions("view_live", "call_family", "mark_expected"),
+        confidence=0.75,
+        key=ctx.visit_key,
     )
 
 
 def unknown_visitor(ctx: RuleContext) -> Decision | None:
     return ctx.decide(
-        Action.NOTIFY, Severity.MEDIUM, "unknown_visitor", "Doorbell with no matching expected visit.",
+        Action.NOTIFY,
+        Severity.MEDIUM,
+        "unknown_visitor",
+        "Doorbell with no matching expected visit.",
         f"Someone rang {ctx.where} at {ctx.when}. Nobody was expected.",
-        actions=ctx.actions("view_live", "mark_expected"), confidence=0.7, key=ctx.visit_key,
+        actions=ctx.actions("view_live", "mark_expected"),
+        confidence=0.7,
+        key=ctx.visit_key,
     )
 
 
@@ -175,7 +240,15 @@ def unknown_visitor(ctx: RuleContext) -> Decision | None:
 def package_delivered(ctx: RuleContext) -> Decision | None:
     if ctx.event.detected is not Detected.PACKAGE:
         return None
-    return ctx.decide(Action.NOTIFY, Severity.INFO, "package_delivered", "Camera saw a package.", f"A package was left at {ctx.where} at {ctx.when}.", confidence=0.8, key=ctx.visit_key)
+    return ctx.decide(
+        Action.NOTIFY,
+        Severity.INFO,
+        "package_delivered",
+        "Camera saw a package.",
+        f"A package was left at {ctx.where} at {ctx.when}.",
+        confidence=0.8,
+        key=ctx.visit_key,
+    )
 
 
 def non_person_motion(ctx: RuleContext) -> Decision | None:
@@ -183,9 +256,17 @@ def non_person_motion(ctx: RuleContext) -> Decision | None:
     if det is Detected.HUMAN or det is Detected.PACKAGE:
         return None
     if det in (Detected.VEHICLE, Detected.ANIMAL) and ctx.quiet and ctx.anomaly >= ctx.config.anomaly_notify_threshold:
-        return ctx.decide(Action.LOG, Severity.LOW, "night_vehicle", "Vehicle or animal during quiet hours.", f"A {det.value} passed {ctx.where} at {ctx.when}.")
+        return ctx.decide(
+            Action.LOG,
+            Severity.LOW,
+            "night_vehicle",
+            "Vehicle or animal during quiet hours.",
+            f"A {det.value} passed {ctx.where} at {ctx.when}.",
+        )
     if det in (Detected.VEHICLE, Detected.ANIMAL):
-        return ctx.decide(Action.IGNORE, Severity.INFO, "routine_motion", "Routine non-person motion.", f"A {det.value} passed {ctx.where}.")
+        return ctx.decide(
+            Action.IGNORE, Severity.INFO, "routine_motion", "Routine non-person motion.", f"A {det.value} passed {ctx.where}."
+        )
     return ctx.decide(Action.IGNORE, Severity.INFO, "routine_motion", "Unclassified motion.", f"Motion at {ctx.where}.")
 
 
@@ -193,7 +274,9 @@ def expected_presence(ctx: RuleContext) -> Decision | None:
     if ctx.match is None:
         return None
     if ctx.match.departing:
-        return ctx.decide(Action.LOG, Severity.INFO, "expected_presence", f"{ctx.who} is still within the expected stay.", f"{ctx.who} is on the way out.")
+        return ctx.decide(
+            Action.LOG, Severity.INFO, "expected_presence", f"{ctx.who} is still within the expected stay.", f"{ctx.who} is on the way out."
+        )
     return ctx.decide(Action.LOG, Severity.INFO, "expected_presence", f"{ctx.who} is expected now.", f"{ctx.who} is at {ctx.where}.")
 
 
@@ -201,9 +284,14 @@ def lingering(ctx: RuleContext) -> Decision | None:
     if not ctx.lingering:
         return None
     return ctx.decide(
-        Action.NOTIFY, Severity.MEDIUM, "lingering", "Someone has stayed at the door for several minutes.",
+        Action.NOTIFY,
+        Severity.MEDIUM,
+        "lingering",
+        "Someone has stayed at the door for several minutes.",
         f"Someone has been at {ctx.where} for several minutes without being let in.",
-        actions=ctx.actions("view_live", "call_family", "mark_expected"), confidence=0.7, key=ctx.visit_key,
+        actions=ctx.actions("view_live", "call_family", "mark_expected"),
+        confidence=0.7,
+        key=ctx.visit_key,
     )
 
 
@@ -216,7 +304,13 @@ def stepped_outside(ctx: RuleContext) -> Decision | None:
     v = ctx.visit
     if v is None or not v.door_opened or v.presence_count != 1:
         return None
-    return ctx.decide(Action.LOG, Severity.LOW, "stepped_outside", "The door opened from inside just before this person was seen.", f"Someone stepped outside at {ctx.when}.")
+    return ctx.decide(
+        Action.LOG,
+        Severity.LOW,
+        "stepped_outside",
+        "The door opened from inside just before this person was seen.",
+        f"Someone stepped outside at {ctx.when}.",
+    )
 
 
 def package_at_risk(ctx: RuleContext) -> Decision | None:
@@ -225,9 +319,14 @@ def package_at_risk(ctx: RuleContext) -> Decision | None:
     if recent is None or (ctx.visit is not None and ctx.visit.package):
         return None
     return ctx.decide(
-        Action.NOTIFY, Severity.MEDIUM, "package_at_risk", "A person approached while a package was waiting.",
+        Action.NOTIFY,
+        Severity.MEDIUM,
+        "package_at_risk",
+        "A person approached while a package was waiting.",
         f"Someone is at {ctx.where} and a package was delivered earlier. Worth a look.",
-        actions=ctx.actions("view_live"), confidence=0.6, key=ctx.visit_key,
+        actions=ctx.actions("view_live"),
+        confidence=0.6,
+        key=ctx.visit_key,
     )
 
 
@@ -235,8 +334,14 @@ def night_presence(ctx: RuleContext) -> Decision | None:
     if not ctx.quiet:
         return None
     return ctx.decide(
-        Action.NOTIFY, Severity.MEDIUM, "night_presence", "Person at the door during quiet hours.",
-        f"Someone is at {ctx.where} at {ctx.when}.", actions=ctx.actions("view_live", "call_family"), confidence=0.7, key=ctx.visit_key,
+        Action.NOTIFY,
+        Severity.MEDIUM,
+        "night_presence",
+        "Person at the door during quiet hours.",
+        f"Someone is at {ctx.where} at {ctx.when}.",
+        actions=ctx.actions("view_live", "call_family"),
+        confidence=0.7,
+        key=ctx.visit_key,
     )
 
 
@@ -244,9 +349,14 @@ def unusual_time(ctx: RuleContext) -> Decision | None:
     if ctx.anomaly < ctx.config.anomaly_notify_threshold:
         return None
     return ctx.decide(
-        Action.NOTIFY, Severity.LOW, "unusual_time", "Person at the door at an unusual time for this home.",
-        f"Someone is at {ctx.where} at {ctx.when}, which is unusual for this time.", actions=ctx.actions("view_live", "mark_expected"),
-        confidence=0.55, key=ctx.visit_key,
+        Action.NOTIFY,
+        Severity.LOW,
+        "unusual_time",
+        "Person at the door at an unusual time for this home.",
+        f"Someone is at {ctx.where} at {ctx.when}, which is unusual for this time.",
+        actions=ctx.actions("view_live", "mark_expected"),
+        confidence=0.55,
+        key=ctx.visit_key,
     )
 
 
@@ -310,17 +420,25 @@ def no_show(ctx: SweepContext) -> list[Decision]:
             key = f"{exp.id}:{ws.date().isoformat()}"
             if ctx.already_decided("no_show", key=key, since=ws - timedelta(days=1)):
                 continue
-            if any(v.expected_visit_id == exp.id and ws - grace <= v.started_at <= we + grace for v in ctx.store.visits(ctx.site.id, since=ws - grace)):
+            if any(
+                v.expected_visit_id == exp.id and ws - grace <= v.started_at <= we + grace
+                for v in ctx.store.visits(ctx.site.id, since=ws - grace)
+            ):
                 continue
             person = ctx.store.get_person(exp.person_id) if exp.person_id else None
             who = person.name if person else exp.label
             out.append(
                 ctx.decide(
-                    Action.NOTIFY, Severity.MEDIUM, "no_show",
+                    Action.NOTIFY,
+                    Severity.MEDIUM,
+                    "no_show",
                     f"No visit matched the expected window {ws.astimezone(ctx.site.zone):%a %H:%M}-{we.astimezone(ctx.site.zone):%H:%M}.",
                     f"{who} did not show up for the {ws.astimezone(ctx.site.zone).strftime('%I:%M %p').lstrip('0')} visit.",
-                    key=key, expected=exp,
-                    actions=[SuggestedAction(kind="call_person", label=f"Call {who}", target_person_id=exp.person_id)] if exp.person_id else [],
+                    key=key,
+                    expected=exp,
+                    actions=[SuggestedAction(kind="call_person", label=f"Call {who}", target_person_id=exp.person_id)]
+                    if exp.person_id
+                    else [],
                 )
             )
     return out
@@ -341,10 +459,14 @@ def inactivity(ctx: SweepContext) -> list[Decision]:
         return []
     return [
         ctx.decide(
-            Action.NOTIFY, Severity.MEDIUM, "inactivity",
+            Action.NOTIFY,
+            Severity.MEDIUM,
+            "inactivity",
             f"No one has been at the door for {hours:.0f} hours; this home usually has daily activity.",
             f"Nothing has happened at the front door for about {hours:.0f} hours, which is unusual for {ctx.site.name}.",
-            key=key, confidence=0.6, actions=[SuggestedAction(kind="call_resident", label="Check in by phone")],
+            key=key,
+            confidence=0.6,
+            actions=[SuggestedAction(kind="call_resident", label="Check in by phone")],
         )
     ]
 
@@ -363,9 +485,13 @@ def door_left_open(ctx: SweepContext) -> list[Decision]:
             continue
         out.append(
             ctx.decide(
-                Action.NOTIFY, Severity.LOW, "door_left_open",
-                f"Contact sensor has reported open for {minutes:.0f} minutes.", f"The door has been open for about {minutes:.0f} minutes.",
-                key=device_id, confidence=0.8,
+                Action.NOTIFY,
+                Severity.LOW,
+                "door_left_open",
+                f"Contact sensor has reported open for {minutes:.0f} minutes.",
+                f"The door has been open for about {minutes:.0f} minutes.",
+                key=device_id,
+                confidence=0.8,
             )
         )
     return out

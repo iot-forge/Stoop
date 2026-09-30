@@ -113,11 +113,17 @@ class RuleContext:
     @property
     def lingering(self) -> bool:
         v, c = self.visit, self.config
-        return v is not None and v.presence_count >= c.linger_presence_count and (v.last_event_at - v.started_at) <= timedelta(minutes=c.linger_window_min)
+        return (
+            v is not None
+            and v.presence_count >= c.linger_presence_count
+            and (v.last_event_at - v.started_at) <= timedelta(minutes=c.linger_window_min)
+        )
 
     def recent_decision(self, rule: str, *, hours: float, key: str | None = None) -> Decision | None:
         """A decision with ``rule`` in the ``hours`` before this event (never from its future)."""
-        return self.store.decision_for_rule(self.site.id, rule, since=self.event.occurred_at - timedelta(hours=hours), until=self.event.occurred_at, key=key)
+        return self.store.decision_for_rule(
+            self.site.id, rule, since=self.event.occurred_at - timedelta(hours=hours), until=self.event.occurred_at, key=key
+        )
 
     # ------------------------------------------------------------- builders
     def actions(self, *kinds: str) -> list[SuggestedAction]:
@@ -129,7 +135,9 @@ class RuleContext:
             elif k == "call_family" and family:
                 out.append(SuggestedAction(kind="call_person", label=f"Call {family[0].name}", target_person_id=family[0].id))
             elif k == "mark_expected":
-                out.append(SuggestedAction(kind=k, label="This visitor was expected", payload={"visit_id": self.visit.id if self.visit else None}))
+                out.append(
+                    SuggestedAction(kind=k, label="This visitor was expected", payload={"visit_id": self.visit.id if self.visit else None})
+                )
             elif k == "contact_emergency":
                 out.append(SuggestedAction(kind=k, label="Contact emergency services", sensitive=True))
             elif k == "check_device":
@@ -274,7 +282,13 @@ class RuleRegistry:
             decision = spec.fn(ctx)
             if decision is not None:
                 return decision
-        return ctx.decide(Action.LOG, Severity.INFO, "unmatched", "No rule claimed this event.", f"{ctx.kind.value.replace('_', ' ').capitalize()} at {ctx.where}.")
+        return ctx.decide(
+            Action.LOG,
+            Severity.INFO,
+            "unmatched",
+            "No rule claimed this event.",
+            f"{ctx.kind.value.replace('_', ' ').capitalize()} at {ctx.where}.",
+        )
 
     def _index(self, name: str) -> int | None:
         for i, r in enumerate(self._rules):

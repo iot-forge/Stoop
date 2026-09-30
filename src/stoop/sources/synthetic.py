@@ -88,15 +88,11 @@ BUILTIN: dict[str, Scenario] = {
         ],
     ),
     "no_show": Scenario("no_show", "Only a vehicle passes; nobody comes to the door.", [_s(0, "motion", "vehicle")]),
-    "device_flap": Scenario(
-        "device_flap", "Doorbell drops offline and recovers.", [_s(0, "device_offline"), _s(45, "device_online")]
-    ),
+    "device_flap": Scenario("device_flap", "Doorbell drops offline and recovers.", [_s(0, "device_offline"), _s(45, "device_online")]),
 }
 
 
-def play_scenario(
-    scenario: Scenario, *, site_id: str, start: datetime, label: str | None = None, learn: bool = True
-) -> list[Event]:
+def play_scenario(scenario: Scenario, *, site_id: str, start: datetime, label: str | None = None, learn: bool = True) -> list[Event]:
     """Materialize a scenario as events beginning at ``start`` (must be tz-aware).
 
     ``learn=False`` marks the events so the policy engine judges them but leaves them out of

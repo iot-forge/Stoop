@@ -62,7 +62,16 @@ class FakeRing:
                 return httpx.Response(400, json={"error": "unsupported_grant_type"})
             tok = f"at-{len(self.issued)}"
             self.issued.append(tok)
-            return httpx.Response(200, json={"access_token": tok, "refresh_token": f"rt-{len(self.issued)}", "expires_in": 14400, "token_type": "Bearer", "scope": "ava.v1:read"})
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": tok,
+                    "refresh_token": f"rt-{len(self.issued)}",
+                    "expires_in": 14400,
+                    "token_type": "Bearer",
+                    "scope": "ava.v1:read",
+                },
+            )
         auth = request.headers.get("Authorization", "")
         if not auth.startswith("Bearer at-"):
             return httpx.Response(401, json={"errors": [{"status": "401", "detail": "bad token"}]})
@@ -73,7 +82,12 @@ class FakeRing:
                 self.unlinked += 1
                 return httpx.Response(200, json={"data": {"type": "app-integrations", "attributes": {"status": "deleted"}}})
             self.integration_calls.append((request.method, json.loads(request.content or b"{}")))
-            return httpx.Response(200, json={"data": {"type": "app-integrations", "attributes": {"status": "awaiting" if request.method == "POST" else "completed"}}})
+            return httpx.Response(
+                200,
+                json={
+                    "data": {"type": "app-integrations", "attributes": {"status": "awaiting" if request.method == "POST" else "completed"}}
+                },
+            )
         return httpx.Response(404)
 
 

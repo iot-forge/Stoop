@@ -85,9 +85,7 @@ class Event(BaseModel):
     @property
     def is_presence(self) -> bool:
         """True when a person is plausibly at the door."""
-        return self.kind is EventKind.BUTTON_PRESS or (
-            self.kind is EventKind.MOTION and self.detected is Detected.HUMAN
-        )
+        return self.kind is EventKind.BUTTON_PRESS or (self.kind is EventKind.MOTION and self.detected is Detected.HUMAN)
 
 
 def make_event_id(source: str, dedupe_key: str) -> str:

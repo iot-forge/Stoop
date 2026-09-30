@@ -1,5 +1,10 @@
 # Stoop
 
+[![CI](https://github.com/iot-forge/Stoop/actions/workflows/ci.yml/badge.svg)](https://github.com/iot-forge/Stoop/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/stoop.svg)](https://pypi.org/project/stoop/)
+[![Python](https://img.shields.io/pypi/pyversions/stoop.svg)](https://pypi.org/project/stoop/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Turn front-door events into decisions a person can act on.
 
 `stoop` is a small Python library that sits between a doorbell or camera feed (Ring today,
@@ -198,6 +203,16 @@ uv run ruff check src tests
 
 Integration tests use the community [`ring-sandbox`](https://github.com/josepha-mayo/ring-sandbox)
 emulator in-process, so no Ring account is needed to run them.
+
+## Status
+
+Version 0.1. The core pipeline, store, rules and reasoners run in production in two apps, but
+the API may still change between minor versions. Every change is listed in
+[`CHANGELOG.md`](CHANGELOG.md). Python 3.12 and 3.13 on Linux, macOS and Windows.
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Security reports: [`SECURITY.md`](SECURITY.md).
 
 ## Docs
 

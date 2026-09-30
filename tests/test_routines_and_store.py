@@ -45,7 +45,9 @@ def test_store_roundtrip_and_queries(tmp_path):
     assert [e.kind for e in store.events("s", kinds=[EventKind.BUTTON_PRESS])] == [EventKind.BUTTON_PRESS]
     assert store.last_event("s").id == evs[-1].id
 
-    d = store.put_decision(Decision(site_id="s", event_id=evs[1].id, action=Action.NOTIFY, severity=Severity.MEDIUM, rule="x", reason="r", message="m"))
+    d = store.put_decision(
+        Decision(site_id="s", event_id=evs[1].id, action=Action.NOTIFY, severity=Severity.MEDIUM, rule="x", reason="r", message="m")
+    )
     assert store.decisions("s", unacknowledged_only=True)[0].id == d.id
     store.acknowledge(d.id, by="dana")
     assert store.decisions("s", unacknowledged_only=True) == []
@@ -72,7 +74,9 @@ def test_expected_visit_windows_expand_recurring():
     assert [s.weekday() for s in starts] == [0, 2]
     assert all(s.hour == 9 for s in starts)
     one_off = ExpectedVisit(site_id="s", label="plumber", window_start=MONDAY, window_end=MONDAY + timedelta(hours=2))
-    assert one_off.windows_between(MONDAY - timedelta(hours=1), MONDAY + timedelta(hours=1), ZoneInfo(TZ)) == [(MONDAY, MONDAY + timedelta(hours=2))]
+    assert one_off.windows_between(MONDAY - timedelta(hours=1), MONDAY + timedelta(hours=1), ZoneInfo(TZ)) == [
+        (MONDAY, MONDAY + timedelta(hours=2))
+    ]
 
 
 def test_unlearned_events_are_judged_but_not_taught(store):

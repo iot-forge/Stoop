@@ -119,8 +119,13 @@ class PolicyEngine:
         out: list[Decision] = []
         for site in self.store.list_sites():
             ctx = SweepContext(
-                site=site, now=now, local=now.astimezone(site.zone), config=self.config, store=self.store,
-                routine=self._routine(site, now), people=self.store.persons(site.id),
+                site=site,
+                now=now,
+                local=now.astimezone(site.zone),
+                config=self.config,
+                store=self.store,
+                routine=self._routine(site, now),
+                people=self.store.persons(site.id),
             )
             for d in self.sweeps.run(ctx):
                 out.append(self.store.put_decision(d))
@@ -202,7 +207,10 @@ class PolicyEngine:
             if exp is None or visit.started_at > at:
                 continue
             stay = timedelta(minutes=exp.expected_duration_min or 0)
-            window_end = max((we for ws, we in exp.windows_between(visit.started_at - grace, visit.started_at + grace, site.zone)), default=visit.started_at)
+            window_end = max(
+                (we for ws, we in exp.windows_between(visit.started_at - grace, visit.started_at + grace, site.zone)),
+                default=visit.started_at,
+            )
             deadline = max(window_end, visit.started_at + stay) + grace
             if visit.started_at <= at <= deadline:
                 person = self.store.get_person(exp.person_id) if exp.person_id else None
@@ -308,7 +316,9 @@ class PolicyEngine:
             visit=ctx.visit,
             matched_person=ctx.match.person if ctx.match else None,
             matched_expected=ctx.match.expected if ctx.match else None,
-            recent_events=self.store.events(site.id, since=ev.occurred_at - timedelta(hours=24), until=ev.occurred_at, limit=50, newest_first=True),
+            recent_events=self.store.events(
+                site.id, since=ev.occurred_at - timedelta(hours=24), until=ev.occurred_at, limit=50, newest_first=True
+            ),
             recent_decisions=self.store.decisions(site.id, since=ev.occurred_at - timedelta(hours=24), limit=20),
             anomaly_score=ctx.anomaly,
             known_people=ctx.people,

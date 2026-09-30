@@ -316,9 +316,7 @@ def next_page_key(next_link: str | None) -> str | None:
     return values[0] if values else None
 
 
-def history_item_to_event(
-    item: dict[str, Any], *, site_id: str, device_id: str, device_name: str | None = None
-) -> Event | None:
+def history_item_to_event(item: dict[str, Any], *, site_id: str, device_id: str, device_name: str | None = None) -> Event | None:
     """Map one ``history-events`` resource to an Event. Unknown types map to OTHER."""
     attrs = item.get("attributes", {})
     event_type = attrs.get("event_type")

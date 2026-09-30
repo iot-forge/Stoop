@@ -337,11 +337,15 @@ class SqliteTokenStore:
         return rows[0]["owner"] if rows else None
 
     def claim(self, link_id: str, owner: str) -> None:
-        self._store.execute("UPDATE ring_links SET owner=?, updated_at=? WHERE link_id=?", (owner, datetime.now(tz=UTC).isoformat(), link_id))
+        self._store.execute(
+            "UPDATE ring_links SET owner=?, updated_at=? WHERE link_id=?", (owner, datetime.now(tz=UTC).isoformat(), link_id)
+        )
 
     def unclaimed(self, *, max_age_s: int = NONCE_MAX_AGE_S) -> list[tuple[str, TokenSet]]:
         cutoff = (datetime.now(tz=UTC) - timedelta(seconds=max_age_s)).isoformat()
-        rows = self._store.query("SELECT link_id, blob FROM ring_links WHERE owner IS NULL AND created_at>=? ORDER BY created_at DESC", (cutoff,))
+        rows = self._store.query(
+            "SELECT link_id, blob FROM ring_links WHERE owner IS NULL AND created_at>=? ORDER BY created_at DESC", (cutoff,)
+        )
         return [(r["link_id"], self._decode(r["blob"])) for r in rows]
 
     def for_owner(self, owner: str) -> list[tuple[str, TokenSet]]:
@@ -349,7 +353,9 @@ class SqliteTokenStore:
         return [(r["link_id"], self._decode(r["blob"])) for r in rows]
 
     def by_account(self, account_id: str) -> tuple[str, TokenSet] | None:
-        rows = self._store.query("SELECT link_id, blob FROM ring_links WHERE account_id=? AND owner IS NOT NULL ORDER BY updated_at DESC LIMIT 1", (account_id,))
+        rows = self._store.query(
+            "SELECT link_id, blob FROM ring_links WHERE account_id=? AND owner IS NOT NULL ORDER BY updated_at DESC LIMIT 1", (account_id,)
+        )
         return (rows[0]["link_id"], self._decode(rows[0]["blob"])) if rows else None
 
     def purge_unclaimed(self, *, older_than_s: int = NONCE_MAX_AGE_S) -> int:

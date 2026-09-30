@@ -100,8 +100,7 @@ class Store:
         """Insert; returns False when the event (by id or dedupe key) already exists."""
         with self._lock:
             cur = self._conn.execute(
-                "INSERT OR IGNORE INTO events(id, site_id, kind, device_id, occurred_at, dedupe_key, json)"
-                " VALUES (?,?,?,?,?,?,?)",
+                "INSERT OR IGNORE INTO events(id, site_id, kind, device_id, occurred_at, dedupe_key, json) VALUES (?,?,?,?,?,?,?)",
                 (
                     event.id,
                     event.site_id,
@@ -167,7 +166,9 @@ class Store:
         self._exec("DELETE FROM persons WHERE id=?", (person_id,))
 
     def persons(self, site_id: str) -> list[Person]:
-        return [Person.model_validate_json(r["json"]) for r in self._rows("SELECT json FROM persons WHERE site_id=? ORDER BY id", (site_id,))]
+        return [
+            Person.model_validate_json(r["json"]) for r in self._rows("SELECT json FROM persons WHERE site_id=? ORDER BY id", (site_id,))
+        ]
 
     # ------------------------------------------------------- expected visits
     def put_expected(self, ev: ExpectedVisit) -> ExpectedVisit:

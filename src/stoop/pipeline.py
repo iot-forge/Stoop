@@ -40,7 +40,9 @@ class CallbackSink:
 
 
 class Pipeline:
-    def __init__(self, engine: PolicyEngine, sinks: Iterable[Sink] = (), *, deliver_actions: Iterable[Action] = (Action.NOTIFY, Action.ESCALATE)) -> None:
+    def __init__(
+        self, engine: PolicyEngine, sinks: Iterable[Sink] = (), *, deliver_actions: Iterable[Action] = (Action.NOTIFY, Action.ESCALATE)
+    ) -> None:
         self.engine = engine
         self.sinks = list(sinks)
         self.deliver_actions = set(deliver_actions)
