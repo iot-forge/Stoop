@@ -5,6 +5,19 @@ Before 1.0 the API may change between minor versions, and every such change is n
 
 ## Unreleased
 
+## 0.1.1
+
+- Ring: `RingHistory.device_status()` reads a device's current readings (online, battery,
+  temperature, humidity, contact state) from the status endpoint, so sensors can be polled
+  without thresholds set in the Ring app.
+- Ring: `status_events()` turns polled readings into events on change: `SENSOR_ALERT` when a
+  reading crosses a `ComfortThresholds` limit, `SENSOR_CLEARED` when it returns, and
+  `DOOR_OPENED`/`DOOR_CLOSED` when a contact sensor's state flips, and tamper alerts. Contact
+  sensors report `contact_detection.faulted` rather than a state string; both are read. Stable
+  dedupe keys per reading.
+- Rules: comfort alerts say the actual reading ("Kitchen is 88°F. That is warm for this home."),
+  in Fahrenheit for homes in US time zones or when the site's `units` metadata is "F".
+
 ## 0.1.0
 
 First public release.

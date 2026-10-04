@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+from pydantic import BaseModel
 
 from stoop.events import Detected, Event, EventKind, MediaRef, make_event_id
 
@@ -221,6 +222,31 @@ class RingHistory:
             )
         return out
 
+    def device_status(self, device_id: str) -> DeviceStatus:
+        """Current readings for one device: online, battery, and for sensors temperature (°C),
+        humidity (%) and the open/closed state. Polling this needs no thresholds set in the Ring app."""
+        doc = self._get(f"/v1/devices/{device_id}/status")
+        a = (doc.get("data") or {}).get("attributes") or {}
+        battery = a.get("battery_status") or {}
+        signal = a.get("signal_strength") or {}
+        # Contact sensors report {"contact_detection": {"faulted": bool}} rather than a state string.
+        contact = a.get("contact_detection") or {}
+        state = str(a["state"]).lower() if a.get("state") is not None else None
+        if state is None and isinstance(contact, dict) and "faulted" in contact:
+            state = "open" if contact.get("faulted") else "closed"
+        tamper = a.get("tamper_detection") or {}
+        return DeviceStatus(
+            device_id=device_id,
+            reported_at=_parse_iso(a.get("reported_at")),
+            online=a.get("online"),
+            battery_pct=battery.get("percentage") if isinstance(battery, dict) else None,
+            temperature_c=_number(a.get("temperature")),
+            humidity=_number(a.get("humidity")),
+            state=state,
+            tampered=bool(tamper.get("detected")) if isinstance(tamper, dict) and "detected" in tamper else None,
+            signal=signal.get("value") if isinstance(signal, dict) else None,
+        )
+
     def snapshot(
         self,
         device_id: str,
@@ -347,3 +373,115 @@ def history_item_to_event(item: dict[str, Any], *, site_id: str, device_id: str,
         dedupe_key=dedupe_key,
         raw=item,
     )
+
+
+# ------------------------------------------------------------- polled readings
+
+
+def _number(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+class DeviceStatus(BaseModel):
+    """One poll of ``/v1/devices/{id}/status``, normalized."""
+
+    device_id: str
+    reported_at: datetime | None = None
+    online: bool | None = None
+    battery_pct: float | None = None
+    temperature_c: float | None = None
+    humidity: float | None = None
+    state: str | None = None  # contact sensors: open / closed
+    tampered: bool | None = None
+    signal: str | None = None
+
+
+class ComfortThresholds(BaseModel):
+    """What counts as too cold, too hot or too damp. Defaults suit an older adult's home."""
+
+    temp_low_c: float = 16.0  # about 61 F
+    temp_high_c: float = 29.0  # about 84 F
+    humidity_high: float = 70.0
+    humidity_low: float | None = None
+
+
+OPEN_STATES = {"open", "faulted"}
+CLOSED_STATES = {"closed", "cleared"}
+
+
+def status_events(
+    status: DeviceStatus,
+    *,
+    site_id: str,
+    device_name: str | None,
+    previous: dict[str, Any] | None,
+    thresholds: ComfortThresholds | None = None,
+    now: datetime | None = None,
+) -> tuple[list[Event], dict[str, Any]]:
+    """Turn a polled reading into events when something changes.
+
+    ``previous`` is what this function returned last time for the same device (or ``None`` on the
+    first poll). Crossing a threshold yields a ``SENSOR_ALERT``; coming back yields
+    ``SENSOR_CLEARED``; a contact sensor's state flipping yields ``DOOR_OPENED``/``DOOR_CLOSED``.
+    Nothing is emitted while a reading simply stays out of range, so one problem is one alert.
+    """
+    t = thresholds or ComfortThresholds()
+    prev = previous or {}
+    when = status.reported_at or now or datetime.now(tz=UTC)
+    flags: dict[str, Any] = {"reported_at": when.isoformat()}
+    events: list[Event] = []
+
+    def emit(kind: EventKind, sensor: str, extra: dict[str, Any]) -> None:
+        key = f"status:{status.device_id}:{kind.value}:{sensor}:{when.isoformat()}"
+        events.append(
+            Event(
+                id=make_event_id(SOURCE, key),
+                site_id=site_id,
+                source=SOURCE,
+                kind=kind,
+                device_id=status.device_id,
+                device_name=device_name,
+                occurred_at=when,
+                sensor=sensor,
+                dedupe_key=key,
+                raw={"polled": True, **extra},
+            )
+        )
+
+    if status.temperature_c is not None:
+        side = "high" if status.temperature_c > t.temp_high_c else "low" if status.temperature_c < t.temp_low_c else None
+        flags["temperature"] = side
+        reading = {"reading": status.temperature_c, "unit": "C", "direction": side or prev.get("temperature")}
+        if side and prev.get("temperature") != side:
+            emit(EventKind.SENSOR_ALERT, "temperature", {**reading, "threshold": t.temp_high_c if side == "high" else t.temp_low_c})
+        elif side is None and prev.get("temperature"):
+            emit(EventKind.SENSOR_CLEARED, "temperature", reading)
+    if status.humidity is not None:
+        side = (
+            "high"
+            if status.humidity > t.humidity_high
+            else "low"
+            if t.humidity_low is not None and status.humidity < t.humidity_low
+            else None
+        )
+        flags["humidity"] = side
+        reading = {"reading": status.humidity, "unit": "%", "direction": side or prev.get("humidity")}
+        if side and prev.get("humidity") != side:
+            emit(EventKind.SENSOR_ALERT, "humidity", {**reading, "threshold": t.humidity_high if side == "high" else t.humidity_low})
+        elif side is None and prev.get("humidity"):
+            emit(EventKind.SENSOR_CLEARED, "humidity", reading)
+    if status.tampered is not None:
+        flags["tampered"] = status.tampered
+        if status.tampered and not prev.get("tampered"):
+            emit(EventKind.SENSOR_ALERT, "tamper", {})
+        elif not status.tampered and prev.get("tampered"):
+            emit(EventKind.SENSOR_CLEARED, "tamper", {})
+    if status.state in OPEN_STATES | CLOSED_STATES:
+        is_open = status.state in OPEN_STATES
+        flags["open"] = is_open
+        if "open" in prev and prev["open"] != is_open:
+            emit(EventKind.DOOR_OPENED if is_open else EventKind.DOOR_CLOSED, "contact", {"state": status.state})
+    return events, flags

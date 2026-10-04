@@ -42,12 +42,23 @@ def sensor_comfort(ctx: RuleContext) -> Decision | None:
     if ctx.event.sensor not in COMFORT_SENSORS:
         return None
     label = (ctx.event.sensor or "sensor").replace("pm25", "air quality").replace("_", " ")
+    reading = _reading_text(ctx)
+    if reading:
+        direction = ctx.event.raw.get("direction")
+        words = {"high": ("warm", "damp"), "low": ("cold", "dry")}
+        word = words.get(direction, ("out of range", "out of range"))[0 if ctx.event.sensor == "temperature" else 1]
+        message = f"{ctx.where} is {reading}. That is {word} for this home."
+        rel = {"high": "above", "low": "below"}.get(direction, "outside")
+        reason = f"{label.capitalize()} {reading} at {ctx.where} at {ctx.when}, {rel} its comfort range."
+    else:
+        reason = f"{label.capitalize()} is outside its normal range at {ctx.where}."
+        message = f"{label.capitalize()} alert at {ctx.where} at {ctx.when}."
     return ctx.decide(
         Action.NOTIFY,
         Severity.MEDIUM,
         "sensor_comfort",
-        f"{label.capitalize()} is outside its normal range at {ctx.where}.",
-        f"{label.capitalize()} alert at {ctx.where} at {ctx.when}.",
+        reason,
+        message,
         actions=ctx.actions("call_family"),
         confidence=0.8,
         key=f"{ctx.event.device_id}:{ctx.event.sensor}",
@@ -504,3 +515,18 @@ def home_sweeps() -> SweepRegistry:
     reg.add(inactivity)
     reg.add(door_left_open)
     return reg
+
+
+def _reading_text(ctx: RuleContext) -> str | None:
+    """'88°F' or '71% humidity' when the event carries a polled reading; Fahrenheit for US homes."""
+    value = ctx.event.raw.get("reading")
+    if value is None:
+        return None
+    if ctx.event.raw.get("unit") == "C":
+        default_units = "F" if ctx.site.timezone.startswith("America/") else "C"
+        if ctx.site.metadata.get("units", default_units) == "F":
+            return f"{round(value * 9 / 5 + 32)}°F"
+        return f"{round(value)}°C"
+    if ctx.event.raw.get("unit") == "%":
+        return f"{round(value)}% humidity"
+    return str(value)
