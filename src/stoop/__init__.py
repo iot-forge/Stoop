@@ -23,7 +23,7 @@ from stoop.pipeline import CallbackSink, LogSink, Pipeline, Sink
 from stoop.policy import PolicyConfig, PolicyEngine, RoutineModel
 from stoop.reasoning import DeterministicReasoner, Reasoner, ReasoningContext, Refinement
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = [
     "Action",

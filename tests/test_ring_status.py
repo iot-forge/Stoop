@@ -119,3 +119,32 @@ def test_contact_sensor_status_uses_rings_real_shape():
         st = ring.device_status("ava1.ring.device.BACK")
     ev, _ = status_events(st, site_id="s", device_name="Backyard", previous=flags)
     assert [(e.kind, e.sensor) for e in ev] == [(EventKind.SENSOR_ALERT, "tamper")]
+
+
+def test_live_view_relays_the_offer_and_closes_the_session():
+    calls = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append((req.method, req.url.path, req.headers.get("Content-Type"), req.content.decode()))
+        if req.method == "POST":
+            return httpx.Response(200, json={"data": {"type": "whep-session", "id": "sess-1", "attributes": {"answer": "v=0\r\nanswer"}}})
+        return httpx.Response(410)
+
+    with RingHistory("tok", base_url="http://ring", transport=httpx.MockTransport(handler)) as ring:
+        live = ring.start_live("cam", "v=0\r\noffer")
+        assert live.session_id == "sess-1" and live.answer.startswith("v=0") and live.device_id == "cam"
+        ring.stop_live("cam", live.session_id)  # already gone on Ring's side: fine
+    assert calls[0] == ("POST", "/v1/devices/cam/media/streaming/whep/sessions", "application/sdp", "v=0\r\noffer")
+    assert calls[1][:2] == ("DELETE", "/v1/devices/cam/media/streaming/whep/sessions/sess-1")
+
+    # Plain WHEP shape: SDP body, session id in Location.
+    plain = httpx.MockTransport(
+        lambda r: httpx.Response(
+            201,
+            content=b"v=0\r\nplain",
+            headers={"Content-Type": "application/sdp", "Location": "/v1/devices/cam/media/streaming/whep/sessions/sess-2"},
+        )
+    )
+    with RingHistory("tok", base_url="http://ring", transport=plain) as ring:
+        live = ring.start_live("cam", "v=0\r\noffer")
+    assert live.session_id == "sess-2" and live.answer == "v=0\r\nplain"

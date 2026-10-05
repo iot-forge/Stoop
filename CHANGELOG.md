@@ -5,6 +5,12 @@ Before 1.0 the API may change between minor versions, and every such change is n
 
 ## Unreleased
 
+## 0.1.2
+
+- Ring: `RingHistory.start_live()` and `stop_live()` open and close a live view over WebRTC
+  (Ring's WHEP endpoint). The browser's SDP offer goes in, the SDP answer comes back as a
+  `LiveSession`; both the JSON:API and plain-SDP response shapes are handled.
+
 ## 0.1.1
 
 - Ring: `RingHistory.device_status()` reads a device's current readings (online, battery,

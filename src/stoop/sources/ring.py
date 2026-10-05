@@ -247,6 +247,31 @@ class RingHistory:
             signal=signal.get("value") if isinstance(signal, dict) else None,
         )
 
+    # ------------------------------------------------------------- live video
+    def start_live(self, device_id: str, sdp_offer: str, *, component_id: int | None = None) -> LiveSession:
+        """Open a live view over WebRTC (WHEP). ``sdp_offer`` is the browser's offer; the answer goes
+        back to the browser. Server-to-server only: Ring blocks browser calls. One session per camera."""
+        resp = self._http.post(
+            f"/v1/devices/{device_id}/media/streaming/whep/sessions",
+            content=sdp_offer.encode(),
+            headers={"Content-Type": "application/sdp", "Accept": "application/json, application/sdp"},
+            params={"component_id": component_id} if component_id is not None else None,
+        )
+        resp.raise_for_status()
+        ctype = resp.headers.get("Content-Type", "")
+        if ctype.startswith("application/sdp"):  # plain WHEP: answer in the body, session in Location
+            return LiveSession(device_id=device_id, session_id=resp.headers.get("Location", "").rsplit("/", 1)[-1], answer=resp.text)
+        data = resp.json().get("data") or {}
+        return LiveSession(
+            device_id=device_id, session_id=str(data.get("id", "")), answer=str((data.get("attributes") or {}).get("answer", ""))
+        )
+
+    def stop_live(self, device_id: str, session_id: str) -> None:
+        """Close a live view. A session Ring already dropped (404/410) is not an error."""
+        resp = self._http.delete(f"/v1/devices/{device_id}/media/streaming/whep/sessions/{session_id}")
+        if resp.status_code not in (404, 410):
+            resp.raise_for_status()
+
     def snapshot(
         self,
         device_id: str,
@@ -397,6 +422,14 @@ class DeviceStatus(BaseModel):
     state: str | None = None  # contact sensors: open / closed
     tampered: bool | None = None
     signal: str | None = None
+
+
+class LiveSession(BaseModel):
+    """A WebRTC live view opened through WHEP."""
+
+    device_id: str
+    session_id: str
+    answer: str  # SDP answer for the browser's RTCPeerConnection
 
 
 class ComfortThresholds(BaseModel):
