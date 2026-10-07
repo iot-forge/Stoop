@@ -218,14 +218,15 @@ def night_doorbell(ctx: RuleContext) -> Decision | None:
 
 
 def lingering_ring(ctx: RuleContext) -> Decision | None:
+    """Someone rang and is still outside minutes later: that much the camera does know."""
     if not ctx.lingering:
         return None
     return ctx.decide(
         Action.NOTIFY,
         Severity.MEDIUM,
         "lingering",
-        "Repeated presence and ringing without being let in.",
-        f"Someone has been at {ctx.where} for several minutes and rang again at {ctx.when}.",
+        "Rang, and still outside minutes later.",
+        f"Someone rang at {ctx.where} at {ctx.when} and is still outside after several minutes.",
         actions=ctx.actions("view_live", "call_family", "mark_expected"),
         confidence=0.75,
         key=ctx.visit_key,
@@ -292,16 +293,31 @@ def expected_presence(ctx: RuleContext) -> Decision | None:
 
 
 def lingering(ctx: RuleContext) -> Decision | None:
+    """Repeated motion with nobody ringing. A doorbell camera's motion zone usually takes in the
+    sidewalk, so by day this is a note, not an alert, and it says only what the camera saw.
+    During quiet hours it is worth a look."""
     if not ctx.lingering:
         return None
+    mins = max(1, int((ctx.visit.last_event_at - ctx.visit.started_at).total_seconds() // 60)) if ctx.visit else 0
+    if ctx.quiet:
+        return ctx.decide(
+            Action.NOTIFY,
+            Severity.MEDIUM,
+            "lingering",
+            "Repeated movement near the door during quiet hours, nobody rang.",
+            f"Movement near {ctx.where} for about {mins} minutes at {ctx.when}, and nobody rang.",
+            actions=ctx.actions("view_live", "call_family"),
+            confidence=0.65,
+            key=ctx.visit_key,
+        )
     return ctx.decide(
         Action.NOTIFY,
-        Severity.MEDIUM,
+        Severity.INFO,
         "lingering",
-        "Someone has stayed at the door for several minutes.",
-        f"Someone has been at {ctx.where} for several minutes without being let in.",
-        actions=ctx.actions("view_live", "call_family", "mark_expected"),
-        confidence=0.7,
+        "Repeated movement near the door, nobody rang. Often passers-by on the sidewalk.",
+        f"Movement near {ctx.where} for about {mins} minutes; nobody rang.",
+        actions=ctx.actions("view_live"),
+        confidence=0.6,
         key=ctx.visit_key,
     )
 

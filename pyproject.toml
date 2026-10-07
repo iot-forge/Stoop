@@ -1,6 +1,6 @@
 [project]
 name = "stoop"
-version = "0.1.2"
+version = "0.1.3"
 description = "Turn front-door events (Ring and others) into decisions a person can act on: memory, routines, policy, and human-gated actions."
 readme = "README.md"
 license = "MIT"

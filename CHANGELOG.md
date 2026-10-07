@@ -5,6 +5,14 @@ Before 1.0 the API may change between minor versions, and every such change is n
 
 ## Unreleased
 
+## 0.1.3
+
+- Rules: repeated motion with nobody ringing no longer claims someone "hasn't been let in". A
+  doorbell camera's motion zone usually includes the sidewalk, so by day it is now an info note
+  ("Movement near Front Door for about 5 minutes; nobody rang."), and a medium alert only during
+  quiet hours. Ringing and still being outside minutes later stays a medium alert, worded as such.
+- Reasoning: the Bedrock prompt says to state only what a camera can know, never intent.
+
 ## 0.1.2
 
 - Ring: `RingHistory.start_live()` and `stop_live()` open and close a live view over WebRTC

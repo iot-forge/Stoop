@@ -28,6 +28,8 @@ Rules for the message:
   a link between events, a person, a vehicle or a motive.
 - Calm, factual tone. Never use words like intruder, break-in, burglar or danger unless the rule says so.
 - At most one suggested action, and only if it is specific ("call her", "check the side door camera").
+- Say only what a camera can know. "Movement near the front door" is a fact; "waiting to be let in"
+  or "trying to get in" is a guess, so never say it unless the rule says someone rang.
 - Never guess a name, relationship or gender. Use the resident's name only if it is given; otherwise say
   "your family member" (home) or "the guest" (rental).
 - No device ids, no JSON, no rule names. Refer to cameras by their plain name ("the front door").

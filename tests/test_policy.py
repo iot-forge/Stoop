@@ -44,7 +44,16 @@ def test_lingering_stranger_daytime(warm_engine, site):
     assert "unknown_visitor" in rules
     assert "lingering" in rules
     linger = next(d for d in decisions if d.rule == "lingering")
-    assert linger.severity is Severity.MEDIUM
+    # Nobody rang: by day that is a note, worded as what the camera saw, not as someone waiting.
+    assert linger.severity is Severity.INFO and linger.action is Action.NOTIFY
+    assert linger.message.startswith("Movement near") and "let in" not in linger.message
+
+
+def test_lingering_at_night_is_worth_a_look(warm_engine, site):
+    events = _events("lingering_stranger", local(2026, 9, 22, 23, 40))
+    decisions = [d for d in (warm_engine.handle(e) for e in events) if d]
+    linger = next(d for d in decisions if d.rule == "lingering" and d.action is Action.NOTIFY)
+    assert linger.severity is Severity.MEDIUM and "nobody rang" in linger.message
 
 
 def test_sensor_alert_escalates_with_confirmation_gate(engine, site, people):
